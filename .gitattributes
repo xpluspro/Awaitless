@@ -1,0 +1,30 @@
+# Keep repository text deterministic across Windows, WSL, and Linux.
+* text=auto eol=lf
+
+# Source, configuration, and documentation always use LF.
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+
+# Native Windows command scripts use CRLF when checked out.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Never attempt newline conversion for binary artifacts.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.whl binary
+*.sqlite binary
+*.db binary
