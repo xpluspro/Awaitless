@@ -1,0 +1,12 @@
+[defaults]
+backend = "local"
+log_tail_lines = 200
+max_return_bytes = 65536
+poll_interval = 2
+
+[hosts.example]
+hostname = "gpu.example.com"
+port = 22
+user = "developer"
+identity_file = "~/.ssh/id_ed25519"
+remote_job_dir = "~/.awaitless/jobs"

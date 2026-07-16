@@ -1,0 +1,4 @@
+interface:
+  display_name: "Awaitless"
+  short_description: "Run and resume durable long-running coding jobs"
+  default_prompt: "Use $awaitless to run this long command without repeated polling."
