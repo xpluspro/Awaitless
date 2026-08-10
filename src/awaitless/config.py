@@ -17,6 +17,7 @@ from .constants import DEFAULT_MAX_RETURN_BYTES, DEFAULT_POLL_INTERVAL, DEFAULT_
 class Settings:
     data_dir: Path
     default_backend: str = "local"
+    default_host: str | None = None
     log_tail_lines: int = DEFAULT_TAIL_LINES
     max_return_bytes: int = DEFAULT_MAX_RETURN_BYTES
     poll_interval: float = DEFAULT_POLL_INTERVAL
@@ -49,6 +50,7 @@ def load_settings(config_path: str | None = None) -> Settings:
     settings = Settings(
         data_dir=data_dir,
         default_backend=str(defaults.get("backend", "local")),
+        default_host=str(defaults["host"]) if defaults.get("host") else None,
         log_tail_lines=int(defaults.get("log_tail_lines", DEFAULT_TAIL_LINES)),
         max_return_bytes=int(defaults.get("max_return_bytes", DEFAULT_MAX_RETURN_BYTES)),
         poll_interval=float(defaults.get("poll_interval", DEFAULT_POLL_INTERVAL)),

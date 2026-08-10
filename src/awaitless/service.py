@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .backends import LocalBackend, SSHBackend
+from .backends import LocalBackend, SSHBackend, SlurmBackend
 from .backends.ssh import SSHError
 from .config import Settings
 from .constants import TERMINAL_STATES
@@ -35,6 +35,7 @@ class Service:
         self.backends = {
             "local": LocalBackend(self.store),
             "ssh": SSHBackend(self.store, settings),
+            "slurm": SlurmBackend(self.store, settings),
         }
 
     def close(self) -> None:
@@ -54,15 +55,16 @@ class Service:
         name: str | None,
         artifacts: list[str],
         log_dir: str | None = None,
+        backend_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not command:
             raise AwaitlessError("a command is required after --")
         if backend not in self.backends:
             raise AwaitlessError(f"unsupported backend: {backend}")
-        if backend == "ssh" and not host:
-            raise AwaitlessError("SSH backend requires --host")
+        if backend in {"ssh", "slurm"} and not host:
+            raise AwaitlessError(f"{backend.upper()} backend requires --host")
         if backend == "local" and host:
-            raise AwaitlessError("--host can only be used with the SSH backend")
+            raise AwaitlessError("--host can only be used with an SSH-based backend")
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise AwaitlessError("--timeout must be positive")
         if stall_timeout_seconds is not None and stall_timeout_seconds <= 0:
@@ -102,6 +104,7 @@ class Service:
             "cwd": resolved_cwd,
             "env": redacted_env,
             "artifacts": artifacts,
+            "backend_options": backend_options or {},
             "created_at": utc_now(),
         }
         atomic_json(job_dir / "metadata.json", metadata)
@@ -110,6 +113,7 @@ class Service:
             "cwd": resolved_cwd,
             "env": env,
             "timeout_seconds": timeout_seconds,
+            "backend_options": backend_options or {},
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
         }
@@ -199,9 +203,14 @@ class Service:
         job = self.backends[job["backend"]].cancel(job, grace_seconds)  # type: ignore[attr-defined]
         return self.summary(job)
 
-    def list(self, state: str | None = None, host: str | None = None) -> list[dict[str, Any]]:
+    def list(
+        self,
+        state: str | None = None,
+        host: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         results = []
-        for job in self.store.list(state=state, host=host):
+        for job in self.store.list(state=state, host=host, limit=limit):
             if job["state"] not in TERMINAL_STATES:
                 try:
                     job = self.backends[job["backend"]].refresh(job)  # type: ignore[attr-defined]
@@ -212,8 +221,8 @@ class Service:
 
     def logs(self, job_id: str, tail: int, max_bytes: int) -> dict[str, Any]:
         job = self.require(job_id)
-        if job["backend"] == "ssh":
-            return self.backends["ssh"].read_logs(job, tail, max_bytes)  # type: ignore[attr-defined]
+        if job["backend"] in {"ssh", "slurm"}:
+            return self.backends[job["backend"]].read_logs(job, tail, max_bytes)  # type: ignore[attr-defined]
         each = max(1, max_bytes // 2)
         result: dict[str, Any] = {"truncated": False, "stdout_tail": "", "stderr_tail": ""}
         for stream in ("stdout", "stderr"):
@@ -239,8 +248,8 @@ class Service:
         }
 
     def artifacts(self, job: dict[str, Any]) -> list[dict[str, Any]]:
-        if job["backend"] == "ssh":
-            return self.backends["ssh"].artifacts(job, self.settings.max_return_bytes)  # type: ignore[attr-defined]
+        if job["backend"] in {"ssh", "slurm"}:
+            return self.backends[job["backend"]].artifacts(job, self.settings.max_return_bytes)  # type: ignore[attr-defined]
         cwd = Path(job["cwd"] or ".")
         items: list[dict[str, Any]] = []
         for declared in job["artifact_paths"]:
@@ -263,7 +272,7 @@ class Service:
         if not timeout or job["state"] not in {"running", "stalled"}:
             return job
         candidates = [parse_time(job["started_at"]).timestamp() if parse_time(job["started_at"]) else 0]
-        if job["backend"] == "ssh":
+        if job["backend"] in {"ssh", "slurm"}:
             candidates.append(parse_time(job.get("last_output_at")).timestamp() if parse_time(job.get("last_output_at")) else 0)
         else:
             candidates.extend(

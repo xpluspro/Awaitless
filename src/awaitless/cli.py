@@ -8,6 +8,7 @@ import sys
 import time
 from typing import Any
 
+from . import __version__
 from .backends.ssh import SSHError
 from .config import load_settings
 from .constants import EXIT_CODES
@@ -21,11 +22,11 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--json", action="store_true", dest="global_json", help="emit JSON")
     root.add_argument("--verbose", action="store_true")
     root.add_argument("--quiet", action="store_true")
-    root.add_argument("--version", action="version", version="awaitless 0.1.1")
+    root.add_argument("--version", action="version", version=f"awaitless {__version__}")
     commands = root.add_subparsers(dest="action", required=True)
 
     submit = commands.add_parser("submit", help="submit a durable job")
-    submit.add_argument("--backend", choices=["local", "ssh"])
+    submit.add_argument("--backend", choices=["local", "ssh", "slurm"])
     submit.add_argument("--host")
     submit.add_argument("--cwd")
     submit.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
@@ -34,6 +35,13 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--log-dir")
     submit.add_argument("--artifact", action="append", default=[])
     submit.add_argument("--result-file", action="append", default=[], dest="artifact")
+    submit.add_argument(
+        "--slurm-option",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="per-job Slurm option (for example partition=gpu or gres=gpu:1)",
+    )
     submit.add_argument("--name")
     submit.add_argument("--json", action="store_true")
     submit.add_argument("command", nargs=argparse.REMAINDER)
@@ -83,6 +91,18 @@ def _env(values: list[str]) -> dict[str, str]:
     return result
 
 
+def _slurm_options(values: list[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for value in values:
+        key, separator, item = value.partition("=")
+        if not separator or not key or not item:
+            raise AwaitlessError(
+                f"invalid --slurm-option value {value!r}; expected NAME=VALUE"
+            )
+        result[key.replace("-", "_")] = item
+    return result
+
+
 def _print(value: Any, json_mode: bool, *, quiet: bool = False) -> None:
     if quiet:
         return
@@ -114,12 +134,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.action == "submit":
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
-            backend = args.backend or ("ssh" if args.host else settings.default_backend)
+            host = args.host or (
+                None if args.backend == "local" else settings.default_host
+            )
+            backend = args.backend or (
+                str(settings.hosts.get(host, {}).get("backend", "ssh"))
+                if host
+                else settings.default_backend
+            )
             result = service.submit(
-                job_id=new_job_id(), command=command, backend=backend, host=args.host, cwd=args.cwd,
+                job_id=new_job_id(), command=command, backend=backend, host=host, cwd=args.cwd,
                 env=_env(args.env), timeout_seconds=parse_duration(args.timeout),
                 stall_timeout_seconds=parse_duration(args.stall_timeout), name=args.name,
                 artifacts=args.artifact, log_dir=args.log_dir,
+                backend_options=_slurm_options(args.slurm_option),
             )
             output = {key: result[key] for key in ("job_id", "state", "backend")}
             _print(output, json_mode, quiet=args.quiet)
@@ -170,9 +198,23 @@ def main(argv: list[str] | None = None) -> int:
             _print(service.inspect(args.job_id), True if json_mode else True, quiet=args.quiet)
             return 0
         if args.action == "doctor":
+            configured_backends = {
+                str(value.get("backend", "ssh"))
+                for value in settings.hosts.values()
+                if isinstance(value, dict)
+            } | {settings.default_backend}
+            needs_ssh = bool(configured_backends & {"ssh", "slurm"})
+            needs_sftp = "slurm" in configured_backends
             result = {
-                "ok": os.name == "posix" and shutil.which("bash") is not None,
+                "ok": (
+                    os.name == "posix"
+                    and shutil.which("bash") is not None
+                    and (not needs_ssh or shutil.which("ssh") is not None)
+                    and (not needs_sftp or shutil.which("sftp") is not None)
+                ),
                 "python": sys.version.split()[0], "bash": shutil.which("bash"), "ssh": shutil.which("ssh"),
+                "sftp": shutil.which("sftp"),
+                "configured_backends": sorted(configured_backends),
                 "data_dir": str(settings.data_dir), "database": str(settings.db_path),
             }
             _print(result, json_mode, quiet=args.quiet)

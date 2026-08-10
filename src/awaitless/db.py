@@ -149,9 +149,15 @@ class Store:
             self.connection.rollback()
             raise
 
-    def list(self, *, state: str | None = None, host: str | None = None) -> list[dict[str, Any]]:
+    def list(
+        self,
+        *,
+        state: str | None = None,
+        host: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         clauses: list[str] = []
-        params: list[str] = []
+        params: list[Any] = []
         if state:
             clauses.append("state=?")
             params.append(state)
@@ -159,8 +165,11 @@ class Store:
             clauses.append("host=?")
             params.append(host)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        limit_clause = " LIMIT ?" if limit is not None else ""
+        if limit is not None:
+            params.append(limit)
         rows = self.connection.execute(
-            f"SELECT * FROM jobs{where} ORDER BY created_at DESC", params
+            f"SELECT * FROM jobs{where} ORDER BY created_at DESC{limit_clause}", params
         ).fetchall()
         return [self._decode(row) for row in rows]
 

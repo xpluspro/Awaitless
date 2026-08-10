@@ -1,5 +1,6 @@
 [defaults]
 backend = "local"
+# host = "slurm-cluster"
 log_tail_lines = 200
 max_return_bytes = 65536
 poll_interval = 2
@@ -13,3 +14,20 @@ remote_job_dir = "~/.awaitless/jobs"
 # gssapi_authentication = false
 # connect_timeout = 8
 # operation_timeout = 20
+
+[hosts.slurm-cluster]
+hostname = "login.cluster.example"
+user = "developer"
+backend = "slurm"
+gssapi_authentication = false
+operation_timeout = 30
+slurm_accounting_grace = 120
+slurm_job_dir = ".awaitless/slurm/jobs"
+
+[hosts.slurm-cluster.slurm]
+partition = "compute"
+account = "research"
+nodes = 1
+ntasks = 1
+cpus_per_task = 1
+time = "00:30:00"

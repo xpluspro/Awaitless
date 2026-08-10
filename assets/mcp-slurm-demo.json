@@ -1,0 +1,63 @@
+{
+  "recorded_at": "2026-08-10T03:51:20Z",
+  "cluster_alias": "xflops_sy",
+  "workflow": [
+    {
+      "phase": "client_1_submit",
+      "job_id": "job_019FE9CB2847AC929E0B2F",
+      "backend": "slurm",
+      "state": "pending",
+      "slurm_job_id": "60597793"
+    },
+    {
+      "phase": "client_1_closed",
+      "job_id": "job_019FE9CB2847AC929E0B2F"
+    },
+    {
+      "phase": "client_2_wait",
+      "job_id": "job_019FE9CB2847AC929E0B2F",
+      "state": "succeeded",
+      "exit_code": 0,
+      "duration_seconds": 8.0,
+      "truncated": false,
+      "stdout_bytes": 43,
+      "stdout_tail": "compute_host=node099 slurm_job_id=60597793\n",
+      "artifact": {
+        "path": "awaitless-mcp-slurm-1786333832.json",
+        "exists": true,
+        "size_bytes": 63,
+        "content": {
+          "ok": true,
+          "compute_host": "node099",
+          "slurm_job_id": "60597793"
+        }
+      }
+    }
+  ],
+  "cancellation_check": {
+    "submitted_by_client_1": {
+      "job_id": "job_019FE9D0CA30EF2A8B018C",
+      "slurm_job_id": "60598011",
+      "state": "pending"
+    },
+    "cancelled_by_client_2": {
+      "state": "cancelled",
+      "scheduler_command": "scancel"
+    }
+  },
+  "assertions": {
+    "separate_mcp_clients": true,
+    "slurm_job_id_persisted": true,
+    "scheduler_state_recovered_with_squeue_and_sacct": true,
+    "compute_work_ran_on_allocated_node": "node099",
+    "login_node_scheduler_commands_only": [
+      "sbatch",
+      "squeue",
+      "sacct",
+      "scancel"
+    ],
+    "logs_and_artifacts_read_via_sftp": true,
+    "json_artifact_parsed": true,
+    "cross_client_cancellation_verified": true
+  }
+}

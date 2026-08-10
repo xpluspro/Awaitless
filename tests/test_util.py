@@ -1,10 +1,12 @@
+import os
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from awaitless.backends.ssh import SSHBackend
-from awaitless.config import Settings, ssh_target_and_options
+from awaitless.config import Settings, load_settings, ssh_target_and_options
 from awaitless.util import parse_duration, parse_time
 
 
@@ -32,6 +34,26 @@ class TimeTest(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed.microsecond, 123456)
         self.assertEqual(parsed.utcoffset().total_seconds(), 8 * 60 * 60)
+
+
+class SettingsTest(unittest.TestCase):
+    def test_default_backend_and_host_are_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.toml"
+            config.write_text(
+                '[defaults]\nbackend = "slurm"\nhost = "cluster"\n',
+                encoding="utf-8",
+            )
+            environment = {
+                **os.environ,
+                "AWAITLESS_CONFIG": str(config),
+                "AWAITLESS_DATA_DIR": str(root / "data"),
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                settings = load_settings()
+        self.assertEqual(settings.default_backend, "slurm")
+        self.assertEqual(settings.default_host, "cluster")
 
 
 class SSHConfigTest(unittest.TestCase):

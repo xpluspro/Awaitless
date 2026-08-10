@@ -98,7 +98,7 @@ jobs:
       - name: Test the installed wheel
         run: |
           python -m venv .wheel-smoke
-          .wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
+          .wheel-smoke/bin/python -m pip install dist/*.whl
           .wheel-smoke/bin/python scripts/smoke_installed_wheel.py
 
       - name: Store distributions

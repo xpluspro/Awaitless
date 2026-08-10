@@ -6,10 +6,10 @@
 
 Durable, bounded, event-driven jobs for AI coding agents.
 
-Awaitless turns a long local or SSH command into a persistent job with a stable
-`job_id`. An agent submits once, waits once, and receives the exit code, bounded
-logs, and declared JSON Artifacts—without repeatedly spending tool calls and
-context on `sleep`, `ps`, `tail`, or SSH polling.
+Awaitless turns a long local, SSH, or Slurm command into a persistent job with
+a stable `job_id`. An agent calls MCP once to submit, once to wait, and receives
+the exit code, bounded logs, and declared JSON Artifacts—without writing shell
+commands or repeatedly spending context on polling.
 
 [简体中文](https://github.com/xpluspro/Awaitless/blob/main/README.zh-CN.md)
 
@@ -19,8 +19,10 @@ context on `sleep`, `ps`, `tail`, or SSH polling.
 
 - **Survives the client:** closing the terminal or interrupting `wait` does not
   cancel the managed job. Reuse the same ID from a new client.
-- **Works locally and over SSH:** each job has durable metadata, logs, exit state,
-  and a remotely persisted wrapper.
+- **Agent-native MCP tools:** `submit_job`, `wait_for_job`, `get_job_status`,
+  `get_job_logs`, `cancel_job`, and `list_jobs` use the standard stdio protocol.
+- **Schedules cluster work:** the Slurm backend persists scheduler IDs and maps
+  queue/accounting state, exit codes, cancellation, logs, and Artifacts.
 - **Returns bounded context:** stdout and stderr tails share a configurable byte
   budget; complete logs stay on disk.
 - **Returns machine-readable results:** declared JSON Artifacts are parsed into
@@ -30,9 +32,9 @@ context on `sleep`, `ps`, `tail`, or SSH polling.
 
 ## Install
 
-The distribution name is `awaitless-runner`; the command remains `awaitless`.
-Awaitless requires Linux, Python 3.10+, and Bash. The SSH backend also requires
-an OpenSSH client.
+The distribution name is `awaitless-runner`. It installs the `awaitless` CLI
+and `awaitless-mcp` stdio server. Awaitless requires Linux, Python 3.10+, and
+Bash. SSH and Slurm hosts also require OpenSSH (`ssh` and `sftp`) locally.
 
 ```bash
 python -m pip install awaitless-runner
@@ -44,6 +46,33 @@ From a source checkout:
 ```bash
 python -m pip install -e .
 ```
+
+## Agent-native MCP quick start
+
+Point your MCP client at the installed stdio command (adapt the outer key to
+your client's configuration format):
+
+```json
+{
+  "mcpServers": {
+    "awaitless": {
+      "command": "awaitless-mcp",
+      "args": ["--config", "/home/me/.config/awaitless/config.toml"]
+    }
+  }
+}
+```
+
+The server uses the official
+[`modelcontextprotocol/python-sdk`](https://github.com/modelcontextprotocol/python-sdk).
+The Agent can now call `submit_job` with an argv array and later call
+`wait_for_job` with the returned ID. Each MCP invocation opens the existing
+`Service` and SQLite store; there is no Awaitless daemon, HTTP endpoint, or Web
+service. Stopping the stdio server does not stop a submitted job.
+
+> Acceptance criterion: install the PyPI package and configure one MCP server;
+> the Agent can submit to Slurm, survive a client disconnect, and receive a
+> structured result without writing Awaitless CLI commands.
 
 ## Quick start
 
@@ -131,6 +160,71 @@ Relative local Artifacts are resolved from the submission working directory,
 even if a later client runs elsewhere. `--log-dir /path/to/logs` creates an
 isolated `/path/to/logs/<job-id>/` directory per job.
 
+## Slurm backend
+
+Configure a scheduler host and its default resource request:
+
+```toml
+[defaults]
+backend = "slurm"
+host = "cluster"
+poll_interval = 10
+log_tail_lines = 200
+max_return_bytes = 65536
+
+[hosts.cluster]
+hostname = "login.cluster.example"
+user = "developer"
+backend = "slurm"
+gssapi_authentication = false
+operation_timeout = 30
+slurm_accounting_grace = 120
+slurm_job_dir = ".awaitless/slurm/jobs"
+
+[hosts.cluster.slurm]
+partition = "compute"
+account = "research"
+nodes = 1
+ntasks = 1
+cpus_per_task = 1
+time = "00:30:00"
+```
+
+With `defaults.host` configured, MCP calls may omit both `backend` and `host`.
+`submit_job` may override the allowlisted options `account`, `constraint`,
+`cpus_per_task`, `gres`, `mem`, `nodes`, `ntasks`, `partition`, `qos`, and
+`time` through `slurm_options`. The backend sends the batch script to `sbatch`
+over stdin, persists the returned Slurm ID, checks active state with `squeue`,
+recovers terminal state/exit code/runtime with `sacct`, and cancels with
+`scancel`. User computation is therefore scheduled on an allocated compute
+node—never launched as a process on the SSH login node. A separate SFTP data
+channel creates the private job directory and reads only the bounded log tails
+and declared Artifacts.
+
+Slurm `PENDING` maps to Awaitless `pending`; active scheduler states map to
+`running`; `COMPLETED` maps to `succeeded`; `CANCELLED` maps to `cancelled`;
+`TIMEOUT`/`DEADLINE` map to `timed_out`; scheduler, node, launch, OOM, and
+preemption failures map to `failed`. `ExitCode` values such as `7:0` and signal
+terminations are preserved as process-style exit codes.
+
+### Real MCP → Slurm disconnect demo
+
+On 2026-08-10, two separate MCP stdio clients ran the checked-in demo against
+a real Slurm 25.11.2 cluster:
+
+| Phase | Observed result |
+|---|---|
+| Client 1 `submit_job` | Awaitless `job_019FE9CB2847AC929E0B2F`, Slurm `60597793`, `pending` |
+| Client 1 exits | No daemon or waiter remains attached |
+| Client 2 `wait_for_job` | `succeeded`, exit `0`, runtime `8.0s` |
+| Bounded stdout | `compute_host=node099 slurm_job_id=60597793` (43 bytes) |
+| JSON Artifact | Parsed `{ "ok": true, "compute_host": "node099", "slurm_job_id": "60597793" }` |
+
+`node099` is the allocated compute node. The reproducible driver is
+[`scripts/mcp_slurm_demo.py`](https://github.com/xpluspro/Awaitless/blob/main/scripts/mcp_slurm_demo.py),
+and the raw structured evidence is
+[`assets/mcp-slurm-demo.json`](https://github.com/xpluspro/Awaitless/blob/main/assets/mcp-slurm-demo.json).
+
 ## Real experiment: 12 polls to 2 calls
 
 On 2026-08-10, the reproducible experiment ran the same sleep-only workload on
@@ -161,7 +255,7 @@ The runnable method and raw result are in
 
 | Tool | Primary abstraction | Survives client exit | Durable status / exit code | Agent-bounded JSON result | Scheduling / resources | Best fit |
 |---|---|:---:|:---:|:---:|:---:|---|
-| **Awaitless** | Local or SSH job ID | Yes | Yes | Yes | No | Non-interactive agent jobs that need resume, bounded logs, and Artifacts |
+| **Awaitless** | Local, SSH, or Slurm job ID + MCP tools | Yes | Yes | Yes | Slurm | Agent-native jobs that need scheduling, resume, bounded logs, and Artifacts |
 | **nohup** | Ignore SIGHUP + redirect output | Often | Manual | No | No | Keeping one shell command alive when manual PID/log handling is enough |
 | **tmux** | Persistent interactive terminal | Yes | Manual | No | No | Humans detaching from and reattaching to an interactive shell |
 | **Pueue** | Daemon-backed local task queue | Yes | Yes | Partial; status/log JSON | Local queue only | Human-operated queues and parallel task groups on one machine |
@@ -171,8 +265,8 @@ The runnable method and raw result are in
 Source notes: GNU [`nohup`](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html),
 [`tmux`](https://tmux.github.io/), [`Pueue`](https://github.com/Nukesor/pueue),
 the Slurm [overview](https://slurm.schedmd.com/overview.html), and the Codex
-[Goal mode guide](https://learn.chatgpt.com/use-cases/follow-goals). If a cluster
-requires Slurm, use Slurm for allocation; Awaitless v0.1 is not a scheduler.
+[Goal mode guide](https://learn.chatgpt.com/use-cases/follow-goals). Awaitless
+uses Slurm for allocation instead of replacing the cluster scheduler.
 
 ## Reliability model
 
@@ -185,6 +279,9 @@ requires Slurm, use Slurm for allocation; Awaitless v0.1 is not a scheduler.
   PID namespace; PID, process group, and `/proc` start time remain a fallback.
 - SSH cancellation persists intent before signaling the validated process
   group. OpenSSH host-key verification keeps its secure defaults.
+- Slurm control-plane SSH calls are restricted to
+  `sbatch`/`squeue`/`sacct`/`scancel`; file access uses SFTP, and arbitrary
+  computation exists only inside the submitted batch script.
 - Suspected credential values are redacted from metadata, and the executable
   run specification is stored with mode `0600`.
 
@@ -210,7 +307,9 @@ Publishing without a stored API token.
 The Codex Skill lives in
 [`skills/awaitless`](https://github.com/xpluspro/Awaitless/tree/main/skills/awaitless).
 The v0.1 product requirements are in
-[`docs/PRD.zh-CN.md`](https://github.com/xpluspro/Awaitless/blob/main/docs/PRD.zh-CN.md).
+[`docs/PRD.zh-CN.md`](https://github.com/xpluspro/Awaitless/blob/main/docs/PRD.zh-CN.md),
+and the v0.2 Agent/Slurm acceptance contract is in
+[`docs/v0.2.zh-CN.md`](https://github.com/xpluspro/Awaitless/blob/main/docs/v0.2.zh-CN.md).
 
 ## License
 

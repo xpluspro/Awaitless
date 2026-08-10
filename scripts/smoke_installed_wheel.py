@@ -33,6 +33,18 @@ def main() -> int:
     executable = Path(sys.executable).with_name("awaitless")
     if not executable.is_file():
         raise RuntimeError(f"awaitless console script is missing: {executable}")
+    mcp_executable = Path(sys.executable).with_name("awaitless-mcp")
+    if not mcp_executable.is_file():
+        raise RuntimeError(f"awaitless-mcp console script is missing: {mcp_executable}")
+    mcp_help = subprocess.run(
+        [str(mcp_executable), "--help"],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if mcp_help.returncode != 0 or "stdio MCP server" not in mcp_help.stdout:
+        raise RuntimeError(f"awaitless-mcp entry point failed: {mcp_help.stderr}")
 
     expected_artifact = {"installed_wheel": True, "version": version}
     artifact_source = json.dumps(expected_artifact, separators=(",", ":"))
