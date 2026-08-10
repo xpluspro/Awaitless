@@ -21,7 +21,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--json", action="store_true", dest="global_json", help="emit JSON")
     root.add_argument("--verbose", action="store_true")
     root.add_argument("--quiet", action="store_true")
-    root.add_argument("--version", action="version", version="awaitless 0.1.0")
+    root.add_argument("--version", action="version", version="awaitless 0.1.1")
     commands = root.add_subparsers(dest="action", required=True)
 
     submit = commands.add_parser("submit", help="submit a durable job")
