@@ -10,3 +10,6 @@ port = 22
 user = "developer"
 identity_file = "~/.ssh/id_ed25519"
 remote_job_dir = "~/.awaitless/jobs"
+# gssapi_authentication = false
+# connect_timeout = 8
+# operation_timeout = 20

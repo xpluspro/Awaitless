@@ -63,21 +63,35 @@ class Service:
             raise AwaitlessError("SSH backend requires --host")
         if backend == "local" and host:
             raise AwaitlessError("--host can only be used with the SSH backend")
-        if backend == "local" and cwd and not Path(cwd).expanduser().is_dir():
-            raise AwaitlessError(f"working directory does not exist: {cwd}")
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise AwaitlessError("--timeout must be positive")
+        if stall_timeout_seconds is not None and stall_timeout_seconds <= 0:
+            raise AwaitlessError("--stall-timeout must be positive")
         for key in env:
             if not ENV_NAME.fullmatch(key):
                 raise AwaitlessError(f"invalid environment variable name: {key!r}")
 
+        if backend == "local":
+            local_cwd = Path(cwd).expanduser() if cwd else Path.cwd()
+            if not local_cwd.is_dir():
+                raise AwaitlessError(f"working directory does not exist: {cwd}")
+            resolved_cwd = str(local_cwd.resolve())
+        else:
+            resolved_cwd = cwd
+
         job_dir = self.settings.jobs_dir / job_id
         job_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
-        logs = Path(log_dir).expanduser().resolve() if log_dir else job_dir
-        logs.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if log_dir:
+            log_root = Path(log_dir).expanduser().resolve()
+            log_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            logs = log_root / job_id
+            logs.mkdir(mode=0o700, exist_ok=False)
+        else:
+            logs = job_dir
         stdout_path = logs / "stdout.log"
         stderr_path = logs / "stderr.log"
         stdout_path.touch(mode=0o600)
         stderr_path.touch(mode=0o600)
-        resolved_cwd = str(Path(cwd).expanduser().resolve()) if cwd and backend == "local" else cwd
         redacted_env = {key: ("<redacted>" if SENSITIVE_NAME.search(key) else value) for key, value in env.items()}
         metadata = {
             "job_id": job_id,
@@ -211,7 +225,18 @@ class Service:
 
     def inspect(self, job_id: str) -> dict[str, Any]:
         job = self.require(job_id)
-        return {**self.summary(job), "command": job["command"], "cwd": job["cwd"], "env": job["env"], "events": self.store.events(job_id), "error": job["error"]}
+        return {
+            **self.summary(job),
+            "command": job["command"],
+            "cwd": job["cwd"],
+            "env": job["env"],
+            "job_dir": job["job_dir"],
+            "stdout_path": job["stdout_path"],
+            "stderr_path": job["stderr_path"],
+            "artifact_paths": job["artifact_paths"],
+            "events": self.store.events(job_id),
+            "error": job["error"],
+        }
 
     def artifacts(self, job: dict[str, Any]) -> list[dict[str, Any]]:
         if job["backend"] == "ssh":
@@ -247,7 +272,11 @@ class Service:
             )
         latest = max(candidates)
         desired = "stalled" if time.time() - latest >= timeout else "running"
-        return self.store.update(job["job_id"], state=desired) if desired != job["state"] else job
+        return (
+            self.store.update_if_active(job["job_id"], state=desired)
+            if desired != job["state"]
+            else job
+        )
 
     @staticmethod
     def summary(job: dict[str, Any]) -> dict[str, Any]:

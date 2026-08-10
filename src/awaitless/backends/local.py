@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import os
 import subprocess
 import sys
 import time
@@ -10,7 +8,7 @@ from typing import Any
 
 from ..constants import TERMINAL_STATES
 from ..db import Store
-from ..util import atomic_json, process_matches, process_start_ticks, terminate_group, utc_now
+from ..util import process_matches, process_start_ticks, terminate_group, utc_now
 
 
 class LocalBackend:
@@ -69,7 +67,11 @@ class LocalBackend:
     def cancel(self, job: dict[str, Any], grace_seconds: float) -> dict[str, Any]:
         if job["state"] in TERMINAL_STATES:
             return job
-        job = self.store.update(job["job_id"], state="cancelled", finished_at=utc_now())
-        if job.get("pgid"):
+        job = self.store.update_if_active(
+            job["job_id"], state="cancelled", finished_at=utc_now()
+        )
+        if job["state"] != "cancelled":
+            return job
+        if job.get("pgid") and process_matches(job.get("pid"), job.get("pid_start_ticks")):
             terminate_group(int(job["pgid"]), grace_seconds)
         return job

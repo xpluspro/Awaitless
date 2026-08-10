@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
+from .constants import TERMINAL_STATES
 from .util import utc_now
 
 
@@ -83,7 +84,8 @@ class Store:
         row = dict(values, created_at=values.get("created_at", now), updated_at=now)
         columns = ", ".join(row)
         placeholders = ", ".join("?" for _ in row)
-        with self.connection:
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
             self.connection.execute(
                 f"INSERT INTO jobs ({columns}) VALUES ({placeholders})", tuple(row.values())
             )
@@ -91,23 +93,43 @@ class Store:
                 "INSERT INTO state_events(job_id,state,occurred_at) VALUES(?,?,?)",
                 (row["job_id"], row["state"], now),
             )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         row = self.connection.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
         return self._decode(row) if row else None
 
     def update(self, job_id: str, **values: Any) -> dict[str, Any]:
+        return self._update(job_id, values, active_only=False)
+
+    def update_if_active(self, job_id: str, **values: Any) -> dict[str, Any]:
+        return self._update(job_id, values, active_only=True)
+
+    def _update(
+        self, job_id: str, values: dict[str, Any], *, active_only: bool
+    ) -> dict[str, Any]:
         if not values:
             result = self.get(job_id)
             if not result:
                 raise KeyError(job_id)
             return result
+        values = dict(values)
         values["updated_at"] = utc_now()
         assignments = ", ".join(f"{key}=?" for key in values)
-        previous = self.get(job_id)
-        if not previous:
-            raise KeyError(job_id)
-        with self.connection:
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            previous = self._decode(row)
+            if active_only and previous["state"] in TERMINAL_STATES:
+                self.connection.commit()
+                return previous
             self.connection.execute(
                 f"UPDATE jobs SET {assignments} WHERE job_id=?", (*values.values(), job_id)
             )
@@ -116,17 +138,16 @@ class Store:
                     "INSERT INTO state_events(job_id,state,occurred_at,detail) VALUES(?,?,?,?)",
                     (job_id, values["state"], values["updated_at"], values.get("error")),
                 )
-        result = self.get(job_id)
-        assert result
-        return result
-
-    def update_if_active(self, job_id: str, **values: Any) -> dict[str, Any]:
-        current = self.get(job_id)
-        if not current:
-            raise KeyError(job_id)
-        if current["state"] in {"succeeded", "failed", "cancelled", "timed_out", "lost"}:
-            return current
-        return self.update(job_id, **values)
+            updated = self.connection.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            assert updated
+            result = self._decode(updated)
+            self.connection.commit()
+            return result
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def list(self, *, state: str | None = None, host: str | None = None) -> list[dict[str, Any]]:
         clauses: list[str] = []

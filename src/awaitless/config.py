@@ -64,6 +64,16 @@ def ssh_target_and_options(settings: Settings, host: str) -> tuple[str, list[str
         options += ["-p", str(cfg["port"])]
     if cfg.get("identity_file"):
         options += ["-i", str(Path(str(cfg["identity_file"])).expanduser())]
+    if "gssapi_authentication" in cfg:
+        gssapi = cfg["gssapi_authentication"]
+        if not isinstance(gssapi, bool):
+            raise ValueError(f"hosts.{host}.gssapi_authentication must be true or false")
+        options += ["-o", f"GSSAPIAuthentication={'yes' if gssapi else 'no'}"]
+    if "connect_timeout" in cfg:
+        connect_timeout = cfg["connect_timeout"]
+        if isinstance(connect_timeout, bool) or not isinstance(connect_timeout, int) or connect_timeout <= 0:
+            raise ValueError(f"hosts.{host}.connect_timeout must be a positive integer")
+        options += ["-o", f"ConnectTimeout={connect_timeout}"]
     options += ["-o", "BatchMode=yes"]
     remote_root = str(cfg.get("remote_job_dir", "~/.awaitless/jobs"))
     return target, options, remote_root

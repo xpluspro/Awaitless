@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import shlex
 import subprocess
-import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from ..config import Settings, ssh_target_and_options
@@ -36,6 +35,17 @@ class SSHBackend:
 
     def _invoke(self, host: str, script: str, *, timeout: float = 10) -> str:
         target, options, _ = ssh_target_and_options(self.settings, host)
+        configured_timeout = self.settings.hosts.get(host, {}).get("operation_timeout")
+        if configured_timeout is not None:
+            if isinstance(configured_timeout, bool):
+                raise ValueError(f"hosts.{host}.operation_timeout must be positive")
+            try:
+                configured_timeout = float(configured_timeout)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"hosts.{host}.operation_timeout must be positive") from exc
+            if configured_timeout <= 0:
+                raise ValueError(f"hosts.{host}.operation_timeout must be positive")
+            timeout = max(timeout, configured_timeout)
         try:
             result = subprocess.run(
                 ["ssh", *options, target, "bash -s"],
@@ -70,8 +80,9 @@ set +e
 umask 077
 job_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 tmp="$job_dir/.tmp.$$"
-date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp.started_at" && mv "$tmp.started_at" "$job_dir/started_at"
+date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.started_at" && mv "$tmp.started_at" "$job_dir/started_at"
 echo $$ > "$tmp.pid" && mv "$tmp.pid" "$job_dir/pid"
+awk '{{print $22}}' "/proc/$$/stat" > "$tmp.pid_start_ticks" && mv "$tmp.pid_start_ticks" "$job_dir/pid_start_ticks"
 ps -o pgid= -p $$ | tr -d ' ' > "$tmp.pgid" && mv "$tmp.pgid" "$job_dir/pgid"
 {cwd_line}
 cd_rc=$?
@@ -84,7 +95,7 @@ else
   rc=125
 fi
 echo "$rc" > "$tmp.exit_code" && mv "$tmp.exit_code" "$job_dir/exit_code"
-date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp.finished_at" && mv "$tmp.finished_at" "$job_dir/finished_at"
+date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.finished_at" && mv "$tmp.finished_at" "$job_dir/finished_at"
 : > "$job_dir/command.sh"
 """
         encoded = base64.b64encode(wrapper.encode()).decode()
@@ -103,15 +114,36 @@ chmod 700 "$job_dir/command.sh"
 : > "$job_dir/stderr.log"
 setsid nohup bash "$job_dir/command.sh" </dev/null >/dev/null 2>&1 &
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  [ -s "$job_dir/pid" ] && exit 0
+  if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && [ -s "$job_dir/started_at" ]; then
+    echo "PID=$(cat "$job_dir/pid")"
+    echo "PID_START_TICKS=$(cat "$job_dir/pid_start_ticks")"
+    echo "PGID=$(cat "$job_dir/pgid")"
+    echo "STARTED=$(cat "$job_dir/started_at")"
+    exit 0
+  fi
   sleep 0.1
 done
 echo 'remote wrapper did not start' >&2
 exit 1
 """
-        self._invoke(job["host"], script, timeout=5)
-        self.store.update(job["job_id"], backend_id=root.rstrip("/") + "/" + job["job_id"])
-        return self.refresh(self.store.get(job["job_id"]) or job)
+        output = self._invoke(job["host"], script, timeout=5)
+        values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        if not values.get("STARTED"):
+            raise SSHError("remote wrapper returned no start timestamp")
+        updates: dict[str, Any] = {
+            "backend_id": root.rstrip("/") + "/" + job["job_id"],
+            "state": "running",
+            "started_at": values["STARTED"],
+        }
+        for source, target in (
+            ("PID", "pid"),
+            ("PID_START_TICKS", "pid_start_ticks"),
+            ("PGID", "pgid"),
+        ):
+            if not values.get(source, "").isdigit():
+                raise SSHError(f"remote wrapper returned an invalid {source.lower()}")
+            updates[target] = int(values[source])
+        return self.store.update_if_active(job["job_id"], **updates)
 
     def refresh(self, job: dict[str, Any]) -> dict[str, Any]:
         if job["state"] in TERMINAL_STATES:
@@ -124,17 +156,38 @@ job_dir={remote_expr}
 [ -d "$job_dir" ] || {{ echo 'MISSING=1'; exit 0; }}
 emit_file() {{ [ -f "$job_dir/$1" ] && printf '%s=' "$2" && base64 < "$job_dir/$1" | tr -d '\\n' && printf '\\n'; }}
 emit_file pid PID
+emit_file pid_start_ticks PID_START_TICKS
 emit_file pgid PGID
 emit_file started_at STARTED
 emit_file finished_at FINISHED
 emit_file exit_code EXIT
+emit_file cancelled_at CANCELLED
 [ -f "$job_dir/stdout.log" ] && echo "STDOUT_BYTES=$(stat -c %s "$job_dir/stdout.log")"
 [ -f "$job_dir/stderr.log" ] && echo "STDERR_BYTES=$(stat -c %s "$job_dir/stderr.log")"
 latest=$(stat -c %Y "$job_dir/stdout.log" "$job_dir/stderr.log" 2>/dev/null | sort -nr | head -1)
 [ -n "${{latest:-}}" ] && echo "LAST_OUTPUT_EPOCH=$latest"
-if [ ! -f "$job_dir/exit_code" ] && [ -f "$job_dir/pid" ]; then
+if [ ! -f "$job_dir/exit_code" ] && [ ! -f "$job_dir/cancelled_at" ] && [ -f "$job_dir/pid" ]; then
   pid=$(cat "$job_dir/pid")
-  kill -0 "$pid" 2>/dev/null && echo 'ALIVE=1' || echo 'ALIVE=0'
+  alive=0
+  case "$pid" in
+    ''|*[!0-9]*) ;;
+    *)
+      if kill -0 "$pid" 2>/dev/null; then
+        alive=1
+        if [ -s "$job_dir/pid_start_ticks" ]; then
+          expected=$(cat "$job_dir/pid_start_ticks")
+          current=$(awk '{{print $22}}' "/proc/$pid/stat" 2>/dev/null || true)
+          [ "$current" = "$expected" ] || alive=0
+        fi
+        if [ "$alive" -eq 1 ] && [ -s "$job_dir/pgid" ]; then
+          expected_pgid=$(cat "$job_dir/pgid")
+          current_pgid=$(awk '{{print $5}}' "/proc/$pid/stat" 2>/dev/null || true)
+          [ "$current_pgid" = "$expected_pgid" ] || alive=0
+        fi
+      fi
+      ;;
+  esac
+  echo "ALIVE=$alive"
 fi
 """
         output = self._invoke(job["host"], script)
@@ -153,13 +206,18 @@ fi
             except (ValueError, UnicodeDecodeError):
                 return None
         updates: dict[str, Any] = {}
-        for key, target in (("PID", "pid"), ("PGID", "pgid")):
+        for key, target in (
+            ("PID", "pid"),
+            ("PID_START_TICKS", "pid_start_ticks"),
+            ("PGID", "pgid"),
+        ):
             value = decoded(key)
             if value and value.isdigit():
                 updates[target] = int(value)
         started = decoded("STARTED")
         finished = decoded("FINISHED")
         exit_value = decoded("EXIT")
+        cancelled = decoded("CANCELLED")
         if started:
             updates["started_at"] = started
             updates["state"] = "running"
@@ -173,6 +231,8 @@ fi
                 )
             except ValueError:
                 pass
+        elif cancelled:
+            updates.update(state="cancelled", finished_at=cancelled)
         elif values.get("ALIVE") == "0":
             updates.update(state="lost", finished_at=utc_now(), error="remote process exited without an exit marker")
         if values.get("STDOUT_BYTES", "").isdigit():
@@ -191,17 +251,63 @@ fi
         assert job["host"]
         _, _, root = ssh_target_and_options(self.settings, job["host"])
         remote_expr = _remote_path_expression(root, job["job_id"])
+        grace_checks = max(0, math.ceil(grace_seconds / 0.1))
         script = f"""set -u
 job_dir={remote_expr}
-[ -f "$job_dir/pgid" ] || exit 0
+[ -d "$job_dir" ] || {{ echo 'OUTCOME=lost'; exit 0; }}
+[ -f "$job_dir/exit_code" ] && {{ echo 'OUTCOME=finished'; exit 0; }}
+[ -f "$job_dir/cancelled_at" ] && {{ echo 'OUTCOME=cancelled'; exit 0; }}
+[ -s "$job_dir/pid" ] && [ -s "$job_dir/pgid" ] || {{ echo 'OUTCOME=lost'; exit 0; }}
+pid=$(cat "$job_dir/pid")
 pgid=$(cat "$job_dir/pgid")
-kill -TERM -- "-$pgid" 2>/dev/null || true
-deadline=$((SECONDS + {max(0, int(grace_seconds))}))
-while kill -0 -- "-$pgid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do sleep 1; done
+case "$pid:$pgid" in *[!0-9:]*) echo 'OUTCOME=lost'; exit 0 ;; esac
+kill -0 "$pid" 2>/dev/null || {{ echo 'OUTCOME=lost'; exit 0; }}
+current_pgid=$(awk '{{print $5}}' "/proc/$pid/stat" 2>/dev/null || true)
+[ "$current_pgid" = "$pgid" ] || {{ echo 'OUTCOME=lost'; exit 0; }}
+if [ -s "$job_dir/pid_start_ticks" ]; then
+  expected=$(cat "$job_dir/pid_start_ticks")
+  current=$(awk '{{print $22}}' "/proc/$pid/stat" 2>/dev/null || true)
+  [ "$current" = "$expected" ] || {{ echo 'OUTCOME=lost'; exit 0; }}
+fi
+tmp="$job_dir/.cancelled.$$"
+date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp" && mv "$tmp" "$job_dir/cancelled_at"
+if [ -f "$job_dir/exit_code" ]; then
+  rm -f "$job_dir/cancelled_at"
+  echo 'OUTCOME=finished'
+  exit 0
+fi
+if ! kill -TERM -- "-$pgid" 2>/dev/null; then
+  rm -f "$job_dir/cancelled_at"
+  [ -f "$job_dir/exit_code" ] && echo 'OUTCOME=finished' || echo 'OUTCOME=lost'
+  exit 0
+fi
+remaining={grace_checks}
+while kill -0 -- "-$pgid" 2>/dev/null && [ "$remaining" -gt 0 ]; do
+  sleep 0.1
+  remaining=$((remaining - 1))
+done
 kill -KILL -- "-$pgid" 2>/dev/null || true
+[ -f "$job_dir/exit_code" ] && {{ rm -f "$job_dir/cancelled_at"; echo 'OUTCOME=finished'; }} || echo 'OUTCOME=cancelled'
 """
-        self._invoke(job["host"], script, timeout=grace_seconds + 5)
-        return self.store.update(job["job_id"], state="cancelled", finished_at=utc_now())
+        output = self._invoke(job["host"], script, timeout=grace_seconds + 5)
+        outcome = dict(
+            line.split("=", 1) for line in output.splitlines() if "=" in line
+        ).get("OUTCOME")
+        current = self.store.get(job["job_id"]) or job
+        if outcome == "finished":
+            return self.refresh(current)
+        if outcome == "cancelled":
+            return self.store.update_if_active(
+                job["job_id"], state="cancelled", finished_at=utc_now()
+            )
+        if outcome == "lost":
+            return self.store.update_if_active(
+                job["job_id"],
+                state="lost",
+                finished_at=utc_now(),
+                error="remote process identity could not be verified during cancellation",
+            )
+        raise SSHError(f"SSH cancellation on {job['host']!r} returned no outcome")
 
     def read_logs(self, job: dict[str, Any], tail: int, max_bytes: int) -> dict[str, Any]:
         assert job["host"]

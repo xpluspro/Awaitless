@@ -26,19 +26,42 @@ class CLITest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def run_cli(self, *args: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
+    def run_cli(
+        self, *args: str, expected: int = 0, cwd: Path = ROOT
+    ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
-            [sys.executable, "-m", "awaitless", *args], cwd=ROOT, env=self.env,
+            [sys.executable, "-m", "awaitless", *args], cwd=cwd, env=self.env,
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15,
         )
         self.assertEqual(result.returncode, expected, result.stderr or result.stdout)
         return result
 
-    def submit(self, *command: str, options: tuple[str, ...] = ()) -> str:
-        result = self.run_cli("submit", "--json", *options, "--", *command)
+    def submit(
+        self, *command: str, options: tuple[str, ...] = (), cwd: Path = ROOT
+    ) -> str:
+        result = self.run_cli("submit", "--json", *options, "--", *command, cwd=cwd)
         value = json.loads(result.stdout)
         self.assertIn(value["state"], {"running", "succeeded"})
         return value["job_id"]
+
+    def configure_fake_ssh(self) -> Path:
+        fake_bin = Path(self.temp.name) / "bin"
+        fake_bin.mkdir()
+        fake_ssh = fake_bin / "ssh"
+        fake_ssh.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [ -n \"${AWAITLESS_FAKE_SSH_FAIL_ONCE:-}\" ] && [ -f \"$AWAITLESS_FAKE_SSH_FAIL_ONCE\" ]; then\n"
+            "  rm -f \"$AWAITLESS_FAKE_SSH_FAIL_ONCE\"; exit 255\n"
+            "fi\n"
+            "exec bash -s\n",
+            encoding="utf-8",
+        )
+        fake_ssh.chmod(0o755)
+        remote_home = Path(self.temp.name) / "remote-home"
+        remote_home.mkdir()
+        self.env["PATH"] = str(fake_bin) + os.pathsep + self.env["PATH"]
+        self.env["HOME"] = str(remote_home)
+        return remote_home
 
     def test_success_survives_new_client_and_separates_logs(self) -> None:
         job = self.submit("bash", "-c", "echo hello; echo warning >&2; sleep .1")
@@ -101,23 +124,48 @@ class CLITest(unittest.TestCase):
         self.assertEqual(value["parsed_results"], {"correctness": True, "latency": 2.5})
         self.assertTrue(value["artifacts"][0]["exists"])
 
-    def test_ssh_wrapper_recovers_status_logs_and_artifact(self) -> None:
-        fake_bin = Path(self.temp.name) / "bin"
-        fake_bin.mkdir()
-        fake_ssh = fake_bin / "ssh"
-        fake_ssh.write_text(
-            "#!/usr/bin/env bash\n"
-            "if [ -n \"${AWAITLESS_FAKE_SSH_FAIL_ONCE:-}\" ] && [ -f \"$AWAITLESS_FAKE_SSH_FAIL_ONCE\" ]; then\n"
-            "  rm -f \"$AWAITLESS_FAKE_SSH_FAIL_ONCE\"; exit 255\n"
-            "fi\n"
-            "exec bash -s\n",
-            encoding="utf-8",
+    def test_implicit_cwd_is_persisted_for_artifact_recovery(self) -> None:
+        work = Path(self.temp.name) / "submit-work"
+        elsewhere = Path(self.temp.name) / "wait-work"
+        work.mkdir()
+        elsewhere.mkdir()
+        command = "from pathlib import Path; Path('result.json').write_text('{\"ok\": true}')"
+        job = self.submit(
+            sys.executable,
+            "-c",
+            command,
+            options=("--artifact", "result.json"),
+            cwd=work,
         )
-        fake_ssh.chmod(0o755)
-        remote_home = Path(self.temp.name) / "remote-home"
-        remote_home.mkdir()
-        self.env["PATH"] = str(fake_bin) + os.pathsep + self.env["PATH"]
-        self.env["HOME"] = str(remote_home)
+        value = json.loads(self.run_cli("wait", job, "--json", cwd=elsewhere).stdout)
+        self.assertEqual(value["parsed_results"], {"ok": True})
+        inspected = json.loads(
+            self.run_cli("inspect", job, "--json", cwd=elsewhere).stdout
+        )
+        self.assertEqual(inspected["cwd"], str(work.resolve()))
+
+    def test_custom_log_directory_is_isolated_per_job(self) -> None:
+        log_root = Path(self.temp.name) / "shared-log-root"
+        first = self.submit("bash", "-c", "printf first", options=("--log-dir", str(log_root)))
+        first_result = json.loads(self.run_cli("wait", first, "--json").stdout)
+        second = self.submit("bash", "-c", "printf second", options=("--log-dir", str(log_root)))
+        second_result = json.loads(self.run_cli("wait", second, "--json").stdout)
+        self.assertEqual(first_result["stdout_tail"], "first")
+        self.assertEqual(second_result["stdout_tail"], "second")
+        first_inspect = json.loads(self.run_cli("inspect", first, "--json").stdout)
+        second_inspect = json.loads(self.run_cli("inspect", second, "--json").stdout)
+        self.assertNotEqual(first_inspect["stdout_path"], second_inspect["stdout_path"])
+        self.assertEqual(Path(first_inspect["stdout_path"]).parent.name, first)
+        self.assertEqual(Path(second_inspect["stdout_path"]).parent.name, second)
+
+    def test_runtime_timeout_must_be_positive(self) -> None:
+        result = self.run_cli(
+            "submit", "--json", "--timeout", "0s", "--", "true", expected=2
+        )
+        self.assertIn("must be positive", json.loads(result.stderr)["error"])
+
+    def test_ssh_wrapper_recovers_status_logs_and_artifact(self) -> None:
+        remote_home = self.configure_fake_ssh()
         fail_once = Path(self.temp.name) / "fail-ssh-once"
         self.env["AWAITLESS_FAKE_SSH_FAIL_ONCE"] = str(fail_once)
         work = Path(self.temp.name) / "remote-work"
@@ -133,7 +181,22 @@ class CLITest(unittest.TestCase):
         self.assertEqual(value["state"], "succeeded")
         self.assertEqual(value["stdout_tail"], "remote\n")
         self.assertEqual(value["parsed_results"], {"ok": True})
+        self.assertGreater(value["duration_seconds"], 0)
         self.assertGreater(value["stdout_bytes"], 0)
+        remote_job = remote_home / ".awaitless" / "jobs" / job
+        self.assertTrue((remote_job / "pid_start_ticks").read_text().strip().isdigit())
+
+    def test_ssh_cancel_records_durable_marker(self) -> None:
+        remote_home = self.configure_fake_ssh()
+        job = self.submit("bash", "-c", "echo ready; sleep 30", options=("--host", "fake"))
+        value = json.loads(
+            self.run_cli("cancel", job, "--grace-period", "0.1s", "--json").stdout
+        )
+        self.assertEqual(value["state"], "cancelled")
+        remote_job = remote_home / ".awaitless" / "jobs" / job
+        self.assertTrue((remote_job / "cancelled_at").is_file())
+        status = json.loads(self.run_cli("status", job, "--json").stdout)
+        self.assertEqual(status["state"], "cancelled")
 
 
 if __name__ == "__main__":

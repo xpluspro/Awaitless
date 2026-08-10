@@ -589,9 +589,11 @@ v0.1 最低要求只基于日志更新时间判断。
 ├── stdout.log
 ├── stderr.log
 ├── pid
+├── pid_start_ticks
 ├── pgid
 ├── started_at
 ├── finished_at
+├── cancelled_at
 └── exit_code
 ```
 

@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from .db import Store
@@ -44,7 +43,7 @@ def run(db_path: Path, job_id: str, spec_path: Path) -> int:
                     error=f"failed to start command: {exc}",
                 )
                 return 1
-            store.update_if_active(
+            current = store.update_if_active(
                 job_id,
                 state="running",
                 started_at=started_at,
@@ -52,6 +51,10 @@ def run(db_path: Path, job_id: str, spec_path: Path) -> int:
                 pid_start_ticks=process_start_ticks(process.pid),
                 pgid=os.getpgid(process.pid),
             )
+            if current["state"] != "running":
+                terminate_group(os.getpgid(process.pid), 0)
+                process.wait()
+                return 0
             timeout = spec.get("timeout_seconds")
             try:
                 exit_code = process.wait(timeout=timeout)

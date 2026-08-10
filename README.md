@@ -45,6 +45,8 @@ awaitless list --state running --json
 awaitless inspect <job-id> --json
 ```
 
+本地提交未指定 `--cwd` 时，Awaitless 会记录提交时的绝对工作目录；因此换目录或重启客户端后，相对 Artifact 仍可恢复。`--log-dir /path/to/logs` 会为每个任务创建 `/path/to/logs/<job-id>/`，避免并发任务串写日志。`inspect` 会返回实际的任务目录和日志路径。
+
 ## 结构化结果
 
 声明 Artifact 后，任务结束时会返回存在性、大小、修改时间；小于日志预算的 JSON 文件还会作为 `parsed_results` 返回。
@@ -75,7 +77,12 @@ port = 22
 user = "developer"
 identity_file = "~/.ssh/id_ed25519"
 remote_job_dir = "~/.awaitless/jobs"
+# gssapi_authentication = false
+# connect_timeout = 8
+# operation_timeout = 20
 ```
+
+`operation_timeout` 是单次 SSH 控制操作的最低超时秒数，不是任务运行超时。登录节点认证较慢时可适当调大；只使用公钥且 GSSAPI 会造成明显延迟时，可按主机关闭 `gssapi_authentication`。任务本身仍由 `submit --timeout` 控制。
 
 ```bash
 awaitless submit --host dcu --cwd /workspace/vllm --env BENCHMARK_MODE=1 \
@@ -93,8 +100,9 @@ CLI 退出码：0 成功，1 内部错误，2 参数错误，3 任务失败，4 
 ## 可靠性模型
 
 - Local runner 与客户端会话分离，用户命令位于独立进程组；取消会终止整个进程组。
-- SQLite 使用 WAL，状态变更带事件历史；PID 与 Linux `/proc` 启动时钟共同校验，降低 PID 复用误判。
-- SSH 完成状态以 `exit_code` 和 `finished_at` 为准，不用 `ps` 推断成功。
+- SQLite 使用 WAL，活跃态到终态的变更使用原子事务，完成、取消和停滞检测不会互相覆盖。
+- Local 与 SSH 后端都使用 PID、进程组和 Linux `/proc` 启动时钟共同校验，降低 PID 复用误判。
+- SSH 完成状态以 `exit_code` 和 `finished_at` 为准，不用 `ps` 推断成功；取消会先写入持久化标记，再终止已校验的进程组。
 - 环境变量名会记录用于诊断，疑似凭证的值在元数据中显示为 `<redacted>`；实际运行规格文件权限为 `0600`。
 
 Codex Skill 位于 [`skills/awaitless`](skills/awaitless)，安装后会引导 Agent 对长任务执行一次 `submit` 和一次 `wait`。
@@ -102,7 +110,7 @@ Codex Skill 位于 [`skills/awaitless`](skills/awaitless)，安装后会引导 A
 ## 开发与测试
 
 ```bash
-python -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
 需求与验收边界见 [`docs/PRD.zh-CN.md`](docs/PRD.zh-CN.md)。
