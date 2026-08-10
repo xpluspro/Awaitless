@@ -206,6 +206,13 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Generated value experiments (keep metric/results/README.md tracked).
+metric/results/raw/
+metric/results/summary.json
+metric/results/summary.md
+metric/results/*-summary.json
+metric/results/*-summary.md
+
 # PyPI configuration file
 .pypirc
 

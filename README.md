@@ -251,6 +251,32 @@ are decoded log content, not estimated tokens or network wire bytes.
 The runnable method and raw result are in
 [`benchmarks/`](https://github.com/xpluspro/Awaitless/tree/main/benchmarks).
 
+## Measuring project value
+
+The repository also contains a pre-registered comparison framework in
+[`metric/`](https://github.com/xpluspro/Awaitless/tree/main/metric). It runs the
+same randomized workloads through plain tmux, a strong tmux wrapper, and
+Awaitless; records one JSONL row per trial; and reports result fidelity,
+disconnect recovery, agent-visible calls/bytes, real usage tokens when supplied,
+process-tree cleanup, latency, and consumer-owned glue code. The smoke profile
+validates the harness only. Publishable claims require the evidence profile,
+real SSH fault injection, and real Agent API usage.
+
+The first live Agent report is now available in
+[`metric/results/deepseek-agent-v2-report.md`](metric/results/deepseek-agent-v2-report.md):
+20 paired DeepSeek cases measured a 71.4% median tool-call reduction and 85.3%
+fewer usage tokens per correct job versus plain tmux. The strong tmux wrapper
+matched Awaitless on calls and used 9.2% fewer tokens per correct job, while
+requiring 319 lines of consumer-owned glue. These are scoped experimental
+results, not universal savings claims.
+
+For orchestration-level testing, [`metric/LONG_RUNNING.md`](metric/LONG_RUNNING.md)
+adds a Blocking-vs-Awaitless benchmark over controlled `cargo build`, pytest,
+Docker build, `npm install`, and model-inference workloads. It includes a strong
+parallel-Blocking baseline and measures synchronous Agent occupancy separately
+from model reasoning, so it can show where direct blocking is faster as well as
+where durable submission and reconnect recovery help.
+
 ## Awaitless vs. alternatives
 
 | Tool | Primary abstraction | Survives client exit | Durable status / exit code | Agent-bounded JSON result | Scheduling / resources | Best fit |
@@ -296,7 +322,7 @@ CLI exit codes: 0 success, 1 internal error, 2 invalid usage, 3 job failure,
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
-ruff check src tests benchmarks
+ruff check src tests benchmarks scripts metric
 ```
 
 GitHub Actions runs the test suite on every supported CPython release from 3.10

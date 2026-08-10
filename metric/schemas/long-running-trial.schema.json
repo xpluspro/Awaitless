@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xpluspro/Awaitless/metric/schemas/long-running-trial.schema.json",
+  "title": "Blocking versus Awaitless long-running benchmark record",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "schema_version", "record_type", "experiment_id", "case_id", "trial_id",
+        "recorded_at", "arm", "scenario", "workload", "adapter", "seed",
+        "environment", "expected", "observed", "metrics", "events", "error"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "record_type": {"const": "trial"},
+        "experiment_id": {"type": "string", "minLength": 1},
+        "case_id": {"type": "string", "minLength": 1},
+        "trial_id": {"type": "string", "minLength": 1},
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "arm": {"enum": ["blocking", "blocking_parallel", "awaitless"]},
+        "scenario": {"enum": ["single", "batch", "disconnect"]},
+        "workload": {"type": "string", "minLength": 1},
+        "adapter": {"type": "string", "minLength": 1},
+        "seed": {"type": "integer"},
+        "environment": {"type": "object"},
+        "expected": {"type": "object"},
+        "observed": {"type": "object"},
+        "metrics": {
+          "type": "object",
+          "required": [
+            "result_correct", "recovery_success", "agent_tool_calls",
+            "agent_visible_bytes", "agent_blocked_seconds", "agent_available_seconds",
+            "agent_occupancy_ratio", "time_to_agent_release_seconds",
+            "wall_time_seconds", "task_duration_sum_seconds", "parallelism_factor",
+            "system_command_invocations", "reasoning_idle_seconds", "input_tokens",
+            "output_tokens", "disk_bytes", "manual_interventions"
+          ],
+          "properties": {
+            "result_correct": {"type": "boolean"},
+            "recovery_success": {"type": ["boolean", "null"]},
+            "agent_tool_calls": {"type": "integer", "minimum": 0},
+            "agent_visible_bytes": {"type": "integer", "minimum": 0},
+            "agent_blocked_seconds": {"type": "number", "minimum": 0},
+            "agent_available_seconds": {"type": "number", "minimum": 0},
+            "agent_occupancy_ratio": {"type": ["number", "null"], "minimum": 0},
+            "time_to_agent_release_seconds": {"type": "number", "minimum": 0},
+            "wall_time_seconds": {"type": "number", "minimum": 0},
+            "task_duration_sum_seconds": {"type": "number", "minimum": 0},
+            "parallelism_factor": {"type": ["number", "null"], "minimum": 0},
+            "system_command_invocations": {"type": "integer", "minimum": 0},
+            "reasoning_idle_seconds": {"type": ["number", "null"], "minimum": 0},
+            "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "disk_bytes": {"type": "integer", "minimum": 0},
+            "manual_interventions": {"type": "integer", "minimum": 0}
+          }
+        },
+        "events": {"type": "array"},
+        "error": {"type": ["string", "null"]}
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema_version", "record_type", "experiment_id", "recorded_at",
+        "workload", "adapter", "reason", "probe", "environment"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "record_type": {"const": "skip"},
+        "experiment_id": {"type": "string", "minLength": 1},
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "workload": {"type": "string", "minLength": 1},
+        "adapter": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1},
+        "probe": {"type": "object"},
+        "environment": {"type": "object"}
+      }
+    }
+  ]
+}

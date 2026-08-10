@@ -234,6 +234,27 @@ time = "00:30:00"
 可运行方法和原始结果位于
 [`benchmarks/`](https://github.com/xpluspro/Awaitless/tree/main/benchmarks)。
 
+## 衡量项目价值
+
+仓库还提供了预注册的
+[`metric/`](https://github.com/xpluspro/Awaitless/tree/main/metric) 对照框架：让原生
+tmux、强 tmux wrapper 和 Awaitless 运行完全相同的随机 workload；每个 trial 保存一条
+JSONL；统一报告结果正确率、断线恢复、Agent 可见调用/字节、可用时的真实 usage token、
+进程树清理、延迟和用户自有 glue 代码量。smoke profile 只验证采集链路；对外结论还需要
+正式 evidence profile、真实 SSH 故障注入和真实 Agent API usage。
+
+第一份真实 Agent 报告见
+[`metric/results/deepseek-agent-v2-report.md`](metric/results/deepseek-agent-v2-report.md)：
+20 个配对 DeepSeek 案例中，Awaitless 相比普通 tmux 将中位工具调用减少 71.4%，每个正确
+任务的 usage token 减少 85.3%。强 tmux wrapper 在调用数上与 Awaitless 相同，每个正确
+任务的 token 还少 9.2%，但需要用户维护 319 行胶水代码。这些结论只适用于已记录的实验，
+不是对所有任务的固定节省承诺。
+
+编排层面的进一步测试见 [`metric/LONG_RUNNING.md`](metric/LONG_RUNNING.md)：它让同步
+Blocking、强并发 Blocking 和 Awaitless 执行受控的 `cargo build`、pytest、Docker build、
+`npm install` 与模型推理任务，分开测量 Agent 同步占用、batch makespan 和断线恢复。该基准
+也会如实展示直接 Blocking 更快的短任务和强并发场景，不把墙钟等待冒充模型 reasoning。
+
 ## Awaitless 与其他方案
 
 | 工具 | 核心抽象 | 客户端退出后继续 | 持久状态/退出码 | Agent 友好的有限 JSON 结果 | 调度/资源分配 | 最适合 |
@@ -272,7 +293,7 @@ CLI 退出码：0 成功，1 内部错误，2 参数错误，3 作业失败，4 
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
-ruff check src tests benchmarks
+ruff check src tests benchmarks scripts metric
 ```
 
 GitHub Actions 会在每次变更中覆盖 CPython 3.10–3.14，随后构建发布包、检查

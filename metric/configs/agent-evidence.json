@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "deepseek-agent-evidence-v2",
+  "description": "Twenty paired fresh-session Agent trials with real API usage and a non-truncating completion budget.",
+  "trials": 20,
+  "seed": 20260810,
+  "arms": ["tmux_plain", "tmux_wrapped", "awaitless"],
+  "poll_interval_seconds": 0.5,
+  "wait_interrupt_after_seconds": 0.1,
+  "log_tail_lines": 50,
+  "max_return_bytes": 65536,
+  "max_agent_turns": 16,
+  "temperature": 0,
+  "max_completion_tokens": 4096,
+  "scenarios": {
+    "recovery": {
+      "duration_seconds": [6.0, 8.0],
+      "line_count": [16, 24],
+      "line_bytes": 512,
+      "exit_codes": [0, 1, 7, 124]
+    }
+  }
+}

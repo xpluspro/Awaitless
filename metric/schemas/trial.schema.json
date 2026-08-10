@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xpluspro/Awaitless/metric/schemas/trial.schema.json",
+  "title": "Awaitless value experiment trial",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "experiment_id",
+    "case_id",
+    "trial_id",
+    "recorded_at",
+    "arm",
+    "scenario",
+    "seed",
+    "environment",
+    "expected",
+    "observed",
+    "metrics",
+    "events",
+    "arm_metadata",
+    "error"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "record_type": {"const": "trial"},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "case_id": {"type": "string", "minLength": 1},
+    "trial_id": {"type": "string", "minLength": 1},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "arm": {"enum": ["tmux_plain", "tmux_wrapped", "awaitless"]},
+    "scenario": {"enum": ["normal", "failure", "large_log", "recovery", "cancel_tree", "ssh_disconnect"]},
+    "seed": {"type": "integer"},
+    "environment": {"type": "object"},
+    "expected": {
+      "type": "object",
+      "required": ["state", "exit_code", "artifact", "final_log_marker", "full_log_bytes", "workload"],
+      "properties": {
+        "state": {"type": "string"},
+        "exit_code": {"type": ["integer", "null"]},
+        "artifact": {"type": ["object", "null"]},
+        "final_log_marker": {"type": ["string", "null"]},
+        "full_log_bytes": {"type": "integer", "minimum": 0},
+        "workload": {
+          "type": "object",
+          "required": ["duration_seconds", "line_count", "line_bytes", "cancel_after_seconds"],
+          "properties": {
+            "duration_seconds": {"type": "number", "minimum": 0},
+            "line_count": {"type": "integer", "minimum": 0},
+            "line_bytes": {"type": "integer", "minimum": 0},
+            "cancel_after_seconds": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "observed": {
+      "type": "object",
+      "required": ["state", "exit_code", "artifact", "final_log_marker_seen", "truncated", "orphan_processes"],
+      "properties": {
+        "state": {"type": ["string", "null"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "artifact": {"type": ["object", "null"]},
+        "final_log_marker_seen": {"type": ["boolean", "null"]},
+        "truncated": {"type": ["boolean", "null"]},
+        "orphan_processes": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "result_correct",
+        "state_correct",
+        "exit_code_correct",
+        "artifact_correct",
+        "log_contract_correct",
+        "recovery_success",
+        "cancel_cleanup_success",
+        "agent_tool_calls",
+        "agent_visible_bytes",
+        "system_command_invocations",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "reasoning_tokens",
+        "wall_time_seconds",
+        "cpu_time_seconds",
+        "peak_rss_bytes",
+        "disk_bytes",
+        "ssh_request_count",
+        "manual_interventions"
+      ],
+      "properties": {
+        "result_correct": {"type": "boolean"},
+        "state_correct": {"type": "boolean"},
+        "exit_code_correct": {"type": ["boolean", "null"]},
+        "artifact_correct": {"type": ["boolean", "null"]},
+        "log_contract_correct": {"type": ["boolean", "null"]},
+        "recovery_success": {"type": ["boolean", "null"]},
+        "cancel_cleanup_success": {"type": ["boolean", "null"]},
+        "agent_tool_calls": {"type": "integer", "minimum": 0},
+        "agent_visible_bytes": {"type": "integer", "minimum": 0},
+        "system_command_invocations": {"type": "integer", "minimum": 0},
+        "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "reasoning_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "wall_time_seconds": {"type": "number", "minimum": 0},
+        "cpu_time_seconds": {"type": ["number", "null"], "minimum": 0},
+        "peak_rss_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "disk_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "ssh_request_count": {"type": ["integer", "null"], "minimum": 0},
+        "manual_interventions": {"type": "integer", "minimum": 0}
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation", "started_at", "duration_seconds", "agent_call", "response_bytes", "response_sha256", "return_code", "system_command_invocations", "interrupted"],
+        "properties": {
+          "operation": {"type": "string"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "duration_seconds": {"type": "number", "minimum": 0},
+          "agent_call": {"type": "boolean"},
+          "response_bytes": {"type": "integer", "minimum": 0},
+          "response_sha256": {"type": "string"},
+          "return_code": {"type": ["integer", "null"]},
+          "system_command_invocations": {"type": "integer", "minimum": 0},
+          "interrupted": {"type": "boolean"}
+        }
+      }
+    },
+    "arm_metadata": {
+      "type": "object",
+      "required": ["custom_glue_sloc", "custom_glue_files", "supported_backends"],
+      "properties": {
+        "custom_glue_sloc": {"type": "integer", "minimum": 0},
+        "custom_glue_files": {"type": "integer", "minimum": 0},
+        "supported_backends": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "llm": {"type": "object"},
+    "error": {"type": ["string", "null"]}
+  }
+}

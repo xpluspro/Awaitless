@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "name": "long-running-model-smoke",
+  "description": "One paid request per arm to validate the real model-inference adapter.",
+  "trials": 1,
+  "seed": 20260810,
+  "arms": ["blocking", "blocking_parallel", "awaitless"],
+  "scenarios": ["single"],
+  "batch_size": 2,
+  "disconnect_after_seconds": 0.1,
+  "defer_before_collect_seconds": 0.0,
+  "defer_before_collect_ratio": 0.0,
+  "model_inference_defer_seconds": 0.0,
+  "poll_interval_seconds": 0.02,
+  "log_tail_lines": 100,
+  "max_return_bytes": 65536,
+  "workloads": [
+    {
+      "id": "model_inference",
+      "adapter": "model_inference",
+      "duration_seconds": 0,
+      "inference_requests": 1,
+      "timeout_seconds": 120,
+      "enabled": true
+    }
+  ]
+}

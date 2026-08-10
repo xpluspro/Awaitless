@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "name": "long-running-agent-evidence-v1",
+  "description": "Opt-in long-duration controlled fixtures for Blocking versus Awaitless orchestration.",
+  "trials": 20,
+  "seed": 20260810,
+  "arms": ["blocking", "blocking_parallel", "awaitless"],
+  "scenarios": ["single", "batch", "disconnect"],
+  "batch_size": 3,
+  "disconnect_after_seconds": 1.0,
+  "defer_before_collect_seconds": 0.5,
+  "defer_before_collect_ratio": 1.0,
+  "model_inference_defer_seconds": 0.0,
+  "poll_interval_seconds": 0.05,
+  "log_tail_lines": 200,
+  "max_return_bytes": 131072,
+  "workloads": [
+    {
+      "id": "sleep_calibration",
+      "adapter": "sleep",
+      "duration_seconds": [60, 180],
+      "timeout_seconds": 300,
+      "enabled": true
+    },
+    {
+      "id": "cargo_build",
+      "adapter": "cargo_build",
+      "duration_seconds": [60, 180],
+      "timeout_seconds": 420,
+      "enabled": true
+    },
+    {
+      "id": "pytest",
+      "adapter": "pytest",
+      "duration_seconds": [60, 180],
+      "timeout_seconds": 420,
+      "enabled": true
+    },
+    {
+      "id": "docker_build",
+      "adapter": "docker_build",
+      "base_image": "busybox:latest",
+      "duration_seconds": [60, 180],
+      "timeout_seconds": 600,
+      "enabled": true
+    },
+    {
+      "id": "npm_install",
+      "adapter": "npm_install",
+      "duration_seconds": [60, 180],
+      "timeout_seconds": 420,
+      "enabled": true
+    },
+    {
+      "id": "model_inference",
+      "adapter": "model_inference",
+      "duration_seconds": 0,
+      "inference_requests": 8,
+      "timeout_seconds": 600,
+      "enabled": true
+    }
+  ]
+}

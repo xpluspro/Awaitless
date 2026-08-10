@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "name": "local-smoke",
+  "description": "Fast harness validation only; not publishable evidence.",
+  "trials": 1,
+  "seed": 20260810,
+  "arms": ["tmux_plain", "tmux_wrapped", "awaitless"],
+  "poll_interval_seconds": 0.05,
+  "wait_interrupt_after_seconds": 0.08,
+  "log_tail_lines": 50,
+  "max_return_bytes": 65536,
+  "scenarios": {
+    "normal": {
+      "duration_seconds": 0.3,
+      "line_count": 6,
+      "line_bytes": 128,
+      "exit_codes": [0]
+    },
+    "failure": {
+      "duration_seconds": 0.25,
+      "line_count": 5,
+      "line_bytes": 128,
+      "exit_codes": [1, 7, 124]
+    },
+    "large_log": {
+      "duration_seconds": 0.1,
+      "line_count": 4096,
+      "line_bytes": 256,
+      "exit_codes": [0]
+    },
+    "recovery": {
+      "duration_seconds": 0.5,
+      "line_count": 10,
+      "line_bytes": 128,
+      "exit_codes": [0]
+    },
+    "cancel_tree": {
+      "duration_seconds": 30.0,
+      "line_count": 1,
+      "line_bytes": 128,
+      "exit_codes": [0],
+      "cancel_after_seconds": 0.1
+    }
+  }
+}

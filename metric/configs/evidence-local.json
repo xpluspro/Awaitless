@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "name": "local-evidence-v1",
+  "description": "Pre-registered local comparison. Run SSH and real-Agent protocols separately.",
+  "trials": 20,
+  "seed": 20260810,
+  "arms": ["tmux_plain", "tmux_wrapped", "awaitless"],
+  "poll_interval_seconds": 5.0,
+  "wait_interrupt_after_seconds": 8.0,
+  "log_tail_lines": 50,
+  "max_return_bytes": 65536,
+  "scenarios": {
+    "normal": {
+      "duration_seconds": [45.0, 90.0],
+      "line_count": [45, 90],
+      "line_bytes": 1024,
+      "exit_codes": [0]
+    },
+    "failure": {
+      "duration_seconds": [45.0, 90.0],
+      "line_count": [45, 90],
+      "line_bytes": 1024,
+      "exit_codes": [1, 7, 124]
+    },
+    "large_log": {
+      "duration_seconds": [5.0, 10.0],
+      "line_count": 102400,
+      "line_bytes": 1024,
+      "exit_codes": [0]
+    },
+    "recovery": {
+      "duration_seconds": [45.0, 90.0],
+      "line_count": [45, 90],
+      "line_bytes": 1024,
+      "exit_codes": [0]
+    },
+    "cancel_tree": {
+      "duration_seconds": 120.0,
+      "line_count": 1,
+      "line_bytes": 128,
+      "exit_codes": [0],
+      "cancel_after_seconds": [2.0, 5.0]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "long-running-smoke",
+  "description": "Quick controlled Blocking, parallel Blocking, and Awaitless orchestration smoke test.",
+  "trials": 1,
+  "seed": 20260810,
+  "arms": ["blocking", "blocking_parallel", "awaitless"],
+  "scenarios": ["single", "batch", "disconnect"],
+  "batch_size": 2,
+  "disconnect_after_seconds": 0.15,
+  "defer_before_collect_seconds": 0.05,
+  "defer_before_collect_ratio": 1.0,
+  "model_inference_defer_seconds": 0.0,
+  "poll_interval_seconds": 0.02,
+  "log_tail_lines": 100,
+  "max_return_bytes": 65536,
+  "workloads": [
+    {
+      "id": "sleep_calibration",
+      "adapter": "sleep",
+      "duration_seconds": 1.0,
+      "timeout_seconds": 30,
+      "enabled": true
+    }
+  ]
+}

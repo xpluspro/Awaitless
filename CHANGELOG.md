@@ -9,6 +9,13 @@
 - Add allowlisted Slurm resource options and an SFTP file data channel so user
   computation never runs directly on login nodes.
 - Add a real two-client MCP → Slurm recovery and cancellation demonstration.
+- Add a reproducible value-metric suite comparing plain tmux, a strong tmux
+  wrapper, and Awaitless across correctness, recovery, context, and cleanup.
+- Add a live DeepSeek Agent runner with actual API usage, client-reset recovery,
+  completion-truncation safeguards, and a reviewed 20 × 3 evidence report.
+- Add a Blocking-vs-Awaitless long-task benchmark with serial and parallel
+  Blocking baselines, disconnect injection, controlled cargo/pytest/Docker/npm/
+  model-inference adapters, capability skips, and blocked-time/makespan analysis.
 
 ## 0.1.1 — 2026-08-10
 
