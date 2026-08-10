@@ -10,6 +10,9 @@ from pathlib import Path
 
 
 _DURATION_RE = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>s|m|h|d)?$")
+_EXCESS_ISO_FRACTION_RE = re.compile(
+    r"(?P<prefix>T\d{2}:\d{2}:\d{2}\.\d{6})\d+(?P<suffix>Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 def utc_now() -> str:
@@ -19,7 +22,10 @@ def utc_now() -> str:
 def parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    # GNU date's %N directive writes nanoseconds, while datetime only stores
+    # microseconds and Python 3.10 rejects fractions longer than six digits.
+    normalized = _EXCESS_ISO_FRACTION_RE.sub(r"\g<prefix>\g<suffix>", value)
+    return datetime.fromisoformat(normalized.replace("Z", "+00:00"))
 
 
 def parse_duration(value: str | int | float | None) -> float | None:

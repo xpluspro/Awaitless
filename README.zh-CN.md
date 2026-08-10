@@ -1,5 +1,9 @@
 # Awaitless
 
+[![CI](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml/badge.svg)](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
+[![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
+
 面向 AI 编程 Agent 的持久化、有限返回、事件驱动作业运行器。
 
 Awaitless 把本地或 SSH 长命令变成带稳定 `job_id` 的持久化作业。Agent
@@ -179,6 +183,10 @@ CLI 退出码：0 成功，1 内部错误，2 参数错误，3 作业失败，4 
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ruff check src tests benchmarks
 ```
+
+GitHub Actions 会在每次变更中覆盖 CPython 3.10–3.14，随后构建发布包、检查
+PyPI README，并通过安装后的 wheel 执行 CLI/Artifact 冒烟；版本 tag 使用
+PyPI Trusted Publishing，不在仓库保存 API token。
 
 Codex Skill 位于
 [`skills/awaitless`](https://github.com/xpluspro/Awaitless/tree/main/skills/awaitless)，

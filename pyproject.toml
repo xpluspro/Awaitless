@@ -11,6 +11,9 @@ requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Awaitless contributors" }]
+dependencies = [
+  "tomli>=2.0.1; python_version < '3.11'",
+]
 keywords = ["ai-agents", "cli", "durable-jobs", "ssh", "task-runner"]
 classifiers = [
   "Development Status :: 3 - Alpha",

@@ -1,10 +1,11 @@
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from awaitless.backends.ssh import SSHBackend
 from awaitless.config import Settings, ssh_target_and_options
-from awaitless.util import parse_duration
+from awaitless.util import parse_duration, parse_time
 
 
 class DurationTest(unittest.TestCase):
@@ -16,6 +17,21 @@ class DurationTest(unittest.TestCase):
     def test_invalid(self) -> None:
         with self.assertRaises(ValueError):
             parse_duration("soon")
+
+
+class TimeTest(unittest.TestCase):
+    def test_gnu_date_nanoseconds_are_truncated_to_microseconds(self) -> None:
+        self.assertEqual(
+            parse_time("2026-08-10T02:47:35.156488983Z"),
+            datetime(2026, 8, 10, 2, 47, 35, 156488, tzinfo=timezone.utc),
+        )
+
+    def test_timezone_offset_is_preserved_when_truncating(self) -> None:
+        parsed = parse_time("2026-08-10T10:47:35.123456789+08:00")
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.microsecond, 123456)
+        self.assertEqual(parsed.utcoffset().total_seconds(), 8 * 60 * 60)
 
 
 class SSHConfigTest(unittest.TestCase):

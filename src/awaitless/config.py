@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import os
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from .constants import DEFAULT_MAX_RETURN_BYTES, DEFAULT_POLL_INTERVAL, DEFAULT_TAIL_LINES
 

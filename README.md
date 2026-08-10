@@ -1,5 +1,9 @@
 # Awaitless
 
+[![CI](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml/badge.svg)](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
+[![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
+
 Durable, bounded, event-driven jobs for AI coding agents.
 
 Awaitless turns a long local or SSH command into a persistent job with a stable
@@ -197,6 +201,11 @@ CLI exit codes: 0 success, 1 internal error, 2 invalid usage, 3 job failure,
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ruff check src tests benchmarks
 ```
+
+GitHub Actions runs the test suite on every supported CPython release from 3.10
+through 3.14, then builds the distributions, checks the PyPI README, and runs an
+installed-wheel CLI/Artifact smoke test. Version tags use PyPI Trusted
+Publishing without a stored API token.
 
 The Codex Skill lives in
 [`skills/awaitless`](https://github.com/xpluspro/Awaitless/tree/main/skills/awaitless).
