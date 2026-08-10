@@ -84,6 +84,14 @@ date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.started_at" && mv "$tmp.started_at" "$job
 echo $$ > "$tmp.pid" && mv "$tmp.pid" "$job_dir/pid"
 awk '{{print $22}}' "/proc/$$/stat" > "$tmp.pid_start_ticks" && mv "$tmp.pid_start_ticks" "$job_dir/pid_start_ticks"
 ps -o pgid= -p $$ | tr -d ' ' > "$tmp.pgid" && mv "$tmp.pgid" "$job_dir/pgid"
+wrapper_pid=$$
+(
+  while kill -0 "$wrapper_pid" 2>/dev/null; do
+    touch "$job_dir/heartbeat"
+    sleep 2
+  done
+) &
+heartbeat_pid=$!
 {cwd_line}
 cd_rc=$?
 {exports}
@@ -94,6 +102,8 @@ else
   echo "working directory does not exist: {shlex.quote(spec.get('cwd') or '')}" >"$job_dir/stderr.log"
   rc=125
 fi
+kill "$heartbeat_pid" 2>/dev/null || true
+wait "$heartbeat_pid" 2>/dev/null || true
 echo "$rc" > "$tmp.exit_code" && mv "$tmp.exit_code" "$job_dir/exit_code"
 date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.finished_at" && mv "$tmp.finished_at" "$job_dir/finished_at"
 : > "$job_dir/command.sh"
@@ -114,7 +124,7 @@ chmod 700 "$job_dir/command.sh"
 : > "$job_dir/stderr.log"
 setsid nohup bash "$job_dir/command.sh" </dev/null >/dev/null 2>&1 &
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && [ -s "$job_dir/started_at" ]; then
+  if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && [ -s "$job_dir/started_at" ] && [ -f "$job_dir/heartbeat" ]; then
     echo "PID=$(cat "$job_dir/pid")"
     echo "PID_START_TICKS=$(cat "$job_dir/pid_start_ticks")"
     echo "PGID=$(cat "$job_dir/pgid")"
@@ -159,14 +169,23 @@ emit_file pid PID
 emit_file pid_start_ticks PID_START_TICKS
 emit_file pgid PGID
 emit_file started_at STARTED
-emit_file finished_at FINISHED
-emit_file exit_code EXIT
-emit_file cancelled_at CANCELLED
 [ -f "$job_dir/stdout.log" ] && echo "STDOUT_BYTES=$(stat -c %s "$job_dir/stdout.log")"
 [ -f "$job_dir/stderr.log" ] && echo "STDERR_BYTES=$(stat -c %s "$job_dir/stderr.log")"
 latest=$(stat -c %Y "$job_dir/stdout.log" "$job_dir/stderr.log" 2>/dev/null | sort -nr | head -1)
 [ -n "${{latest:-}}" ] && echo "LAST_OUTPUT_EPOCH=$latest"
-if [ ! -f "$job_dir/exit_code" ] && [ ! -f "$job_dir/cancelled_at" ] && [ -f "$job_dir/pid" ]; then
+heartbeat_fresh=0
+if [ -f "$job_dir/heartbeat" ]; then
+  heartbeat_epoch=$(stat -c %Y "$job_dir/heartbeat")
+  now_epoch=$(date +%s)
+  heartbeat_age=$((now_epoch - heartbeat_epoch))
+  [ "$heartbeat_age" -le 15 ] && heartbeat_fresh=1
+  echo "HEARTBEAT_EPOCH=$heartbeat_epoch"
+fi
+if [ ! -f "$job_dir/exit_code" ] && [ ! -f "$job_dir/cancelled_at" ] && [ "$heartbeat_fresh" -eq 1 ]; then
+  # Some clusters isolate separate SSH sessions in different PID namespaces.
+  # The wrapper-owned heartbeat remains observable through the shared job dir.
+  echo 'ALIVE=1'
+elif [ ! -f "$job_dir/exit_code" ] && [ ! -f "$job_dir/cancelled_at" ] && [ -f "$job_dir/pid" ]; then
   pid=$(cat "$job_dir/pid")
   alive=0
   case "$pid" in
@@ -174,6 +193,8 @@ if [ ! -f "$job_dir/exit_code" ] && [ ! -f "$job_dir/cancelled_at" ] && [ -f "$j
     *)
       if kill -0 "$pid" 2>/dev/null; then
         alive=1
+        current_state=$(awk '{{print $3}}' "/proc/$pid/stat" 2>/dev/null || true)
+        [ "$current_state" = "Z" ] && alive=0
         if [ -s "$job_dir/pid_start_ticks" ]; then
           expected=$(cat "$job_dir/pid_start_ticks")
           current=$(awk '{{print $22}}' "/proc/$pid/stat" 2>/dev/null || true)
@@ -187,8 +208,33 @@ if [ ! -f "$job_dir/exit_code" ] && [ ! -f "$job_dir/cancelled_at" ] && [ -f "$j
       fi
       ;;
   esac
-  echo "ALIVE=$alive"
+  if [ "$alive" -eq 0 ]; then
+    # The wrapper writes exit_code immediately after the child exits. A refresh
+    # can otherwise land in that tiny gap and permanently misclassify success
+    # as lost, so give the atomic completion marker a short visibility window.
+    for _ in 1 2 3 4 5; do
+      if [ -f "$job_dir/exit_code" ] || [ -f "$job_dir/cancelled_at" ]; then break; fi
+      sleep 0.1
+    done
+    if [ -f "$job_dir/exit_code" ]; then
+      emit_file exit_code EXIT
+      emit_file finished_at FINISHED
+    elif [ -f "$job_dir/cancelled_at" ]; then
+      emit_file cancelled_at CANCELLED
+    else
+      echo 'ALIVE=0'
+    fi
+  else
+    echo 'ALIVE=1'
+  fi
 fi
+# Read terminal markers last. Besides producing a coherent snapshot for jobs
+# that were already complete, this closes the window where exit_code appeared
+# after the first read but before the liveness branch.
+emit_file finished_at FINISHED
+emit_file exit_code EXIT
+emit_file cancelled_at CANCELLED
+exit 0
 """
         output = self._invoke(job["host"], script)
         values: dict[str, str] = {}

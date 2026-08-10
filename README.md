@@ -1,23 +1,49 @@
 # Awaitless
 
-面向 AI 编程 Agent 的持久化任务运行器。它把长命令交给独立进程或远端 wrapper，并用稳定的 `job_id` 完成等待、恢复、日志读取和取消，避免 Agent 重复执行 `sleep`、`ps`、`tail` 或 SSH 轮询。
+Durable, bounded, event-driven jobs for AI coding agents.
 
-> Event-driven durable jobs for AI coding agents.
+Awaitless turns a long local or SSH command into a persistent job with a stable
+`job_id`. An agent submits once, waits once, and receives the exit code, bounded
+logs, and declared JSON Artifacts—without repeatedly spending tool calls and
+context on `sleep`, `ps`, `tail`, or SSH polling.
 
-## 安装
+[简体中文](https://github.com/xpluspro/Awaitless/blob/main/README.zh-CN.md)
 
-需要 Linux、Python 3.10+、Bash；SSH 后端还需要 OpenSSH 客户端。
+![Awaitless SSH submit, disconnect, resume, and Artifact demo](https://raw.githubusercontent.com/xpluspro/Awaitless/main/assets/awaitless-demo.gif)
+
+## Why Awaitless
+
+- **Survives the client:** closing the terminal or interrupting `wait` does not
+  cancel the managed job. Reuse the same ID from a new client.
+- **Works locally and over SSH:** each job has durable metadata, logs, exit state,
+  and a remotely persisted wrapper.
+- **Returns bounded context:** stdout and stderr tails share a configurable byte
+  budget; complete logs stay on disk.
+- **Returns machine-readable results:** declared JSON Artifacts are parsed into
+  `parsed_results`.
+- **Handles real cluster edges:** SSH liveness uses a wrapper-owned heartbeat and
+  does not assume separate login sessions can see the same PID namespace.
+
+## Install
+
+The distribution name is `awaitless-runner`; the command remains `awaitless`.
+Awaitless requires Linux, Python 3.10+, and Bash. The SSH backend also requires
+an OpenSSH client.
 
 ```bash
-python -m pip install -e .
+python -m pip install awaitless-runner
 awaitless doctor --json
 ```
 
-默认数据保存在 `~/.local/share/awaitless`，也可通过 `AWAITLESS_DATA_DIR` 或配置文件修改。
+From a source checkout:
 
-## 快速开始
+```bash
+python -m pip install -e .
+```
 
-提交会在任务结束前返回：
+## Quick start
+
+Submit returns before the job finishes:
 
 ```bash
 awaitless submit --json --name build -- ninja -C build
@@ -27,15 +53,16 @@ awaitless submit --json --name build -- ninja -C build
 {"job_id":"job_019F...","state":"running","backend":"local"}
 ```
 
-随后只调用一次阻塞式等待：
+Then make one blocking call:
 
 ```bash
 awaitless wait job_019F... --json
 ```
 
-`wait` 被终端或平台中断不会终止任务；重新使用同一 `job_id` 即可恢复。
+If that client is closed or interrupted, start a new one and run the same
+`wait` command with the saved ID. The managed job keeps running.
 
-常用命令：
+Useful one-shot operations:
 
 ```bash
 awaitless status <job-id> --json
@@ -45,24 +72,9 @@ awaitless list --state running --json
 awaitless inspect <job-id> --json
 ```
 
-本地提交未指定 `--cwd` 时，Awaitless 会记录提交时的绝对工作目录；因此换目录或重启客户端后，相对 Artifact 仍可恢复。`--log-dir /path/to/logs` 会为每个任务创建 `/path/to/logs/<job-id>/`，避免并发任务串写日志。`inspect` 会返回实际的任务目录和日志路径。
+## SSH and structured Artifacts
 
-## 结构化结果
-
-声明 Artifact 后，任务结束时会返回存在性、大小、修改时间；小于日志预算的 JSON 文件还会作为 `parsed_results` 返回。
-
-```bash
-awaitless submit --json \
-  --cwd /workspace/project \
-  --artifact results/benchmark.json \
-  -- bash -c './benchmark > run.txt'
-```
-
-默认只返回 stdout/stderr 最后 200 行，合计内容预算为 64 KiB。完整日志仍保存在任务目录中，截断时 JSON 的 `truncated` 为 `true`。
-
-## SSH 后端
-
-在 `~/.config/awaitless/config.toml` 中配置别名：
+Declare a host in `~/.config/awaitless/config.toml`:
 
 ```toml
 [defaults]
@@ -71,7 +83,7 @@ log_tail_lines = 200
 max_return_bytes = 65536
 poll_interval = 2
 
-[hosts.dcu]
+[hosts.gpu]
 hostname = "gpu.example.com"
 port = 22
 user = "developer"
@@ -82,35 +94,115 @@ remote_job_dir = "~/.awaitless/jobs"
 # operation_timeout = 20
 ```
 
-`operation_timeout` 是单次 SSH 控制操作的最低超时秒数，不是任务运行超时。登录节点认证较慢时可适当调大；只使用公钥且 GSSAPI 会造成明显延迟时，可按主机关闭 `gssapi_authentication`。任务本身仍由 `submit --timeout` 控制。
+`operation_timeout` is the minimum timeout for one SSH control operation, not a
+job runtime limit. Use `submit --timeout` to limit the job itself.
+
+Submit a remote command and declare its result:
 
 ```bash
-awaitless submit --host dcu --cwd /workspace/vllm --env BENCHMARK_MODE=1 \
-  --timeout 2h --artifact results.json -- ./run_microbench.sh
+awaitless submit --json \
+  --host gpu \
+  --cwd /workspace/project \
+  --timeout 2h \
+  --artifact results/benchmark.json \
+  -- ./run_benchmark.sh
 ```
 
-远端任务通过 `setsid nohup` 启动，状态与退出码原子写入独立目录。主机密钥检查沿用 OpenSSH 的安全默认值；Awaitless 不传递禁用检查的选项。
+On completion, `wait --json` reports Artifact existence, size, and modification
+time. A declared JSON file within the return budget is also exposed directly:
 
-## 状态和退出码
+```json
+{
+  "state": "succeeded",
+  "exit_code": 0,
+  "truncated": false,
+  "parsed_results": {
+    "correctness": true,
+    "latency_us": 24.7
+  }
+}
+```
 
-状态：`starting`、`running`、`stalled`、`succeeded`、`failed`、`cancelled`、`timed_out`、`lost`。`--stall-timeout 20m` 只提示停滞，不自动取消。
+Relative local Artifacts are resolved from the submission working directory,
+even if a later client runs elsewhere. `--log-dir /path/to/logs` creates an
+isolated `/path/to/logs/<job-id>/` directory per job.
 
-CLI 退出码：0 成功，1 内部错误，2 参数错误，3 任务失败，4 任务或客户端等待超时，5 已取消，6 状态丢失，7 SSH 连接失败。
+## Real experiment: 12 polls to 2 calls
 
-## 可靠性模型
+On 2026-08-10, the reproducible experiment ran the same sleep-only workload on
+a real SSH login node: twelve 1 KiB log records, 4.5 seconds apart. It used no
+CPU- or GPU-intensive work. The traditional side repeatedly fetched its entire
+log snapshot twelve times; Awaitless used one `submit` and one `wait`.
 
-- Local runner 与客户端会话分离，用户命令位于独立进程组；取消会终止整个进程组。
-- SQLite 使用 WAL，活跃态到终态的变更使用原子事务，完成、取消和停滞检测不会互相覆盖。
-- Local 与 SSH 后端都使用 PID、进程组和 Linux `/proc` 启动时钟共同校验，降低 PID 复用误判。
-- SSH 完成状态以 `exit_code` 和 `finished_at` 为准，不用 `ps` 推断成功；取消会先写入持久化标记，再终止已校验的进程组。
-- 环境变量名会记录用于诊断，疑似凭证的值在元数据中显示为 `<redacted>`；实际运行规格文件权限为 `0600`。
+| Measured result | Traditional SSH polling | Awaitless |
+|---|---:|---:|
+| Poll/check calls after launch | 12 | 0 |
+| Agent-visible CLI calls, including launch | 13 | 2 |
+| Logical log bytes returned | 84,992 B | 12,288 B |
+| Repeated log bytes | 72,704 B | 0 B |
+| Exit code | 0 | 0 |
+| Parsed JSON Artifact | No | Yes |
 
-Codex Skill 位于 [`skills/awaitless`](skills/awaitless)，安装后会引导 Agent 对长任务执行一次 `submit` 和一次 `wait`。
+That is **72,704 fewer returned log bytes (85.5%)** and **13 → 2 agent-visible
+CLI calls (84.6%)**. The twelve traditional log snapshots were
+`[1024, 2048, 3072, 4096, 5120, 6144, 8192, 9216, 10240, 11264, 12288, 12288]`
+bytes. "Calls" here means agent-visible CLI invocations; Awaitless's internal
+SSH control operations do not trigger additional agent turns. The byte figures
+are decoded log content, not estimated tokens or network wire bytes.
 
-## 开发与测试
+The runnable method and raw result are in
+[`benchmarks/`](https://github.com/xpluspro/Awaitless/tree/main/benchmarks).
+
+## Awaitless vs. alternatives
+
+| Tool | Primary abstraction | Survives client exit | Durable status / exit code | Agent-bounded JSON result | Scheduling / resources | Best fit |
+|---|---|:---:|:---:|:---:|:---:|---|
+| **Awaitless** | Local or SSH job ID | Yes | Yes | Yes | No | Non-interactive agent jobs that need resume, bounded logs, and Artifacts |
+| **nohup** | Ignore SIGHUP + redirect output | Often | Manual | No | No | Keeping one shell command alive when manual PID/log handling is enough |
+| **tmux** | Persistent interactive terminal | Yes | Manual | No | No | Humans detaching from and reattaching to an interactive shell |
+| **Pueue** | Daemon-backed local task queue | Yes | Yes | Partial; status/log JSON | Local queue only | Human-operated queues and parallel task groups on one machine |
+| **Slurm** | Cluster workload manager | Yes | Yes, with accounting | Job-defined | Yes | Allocating and scheduling cluster CPU/GPU resources |
+| **Codex Goal mode** | Durable agent objective across turns | Yes | Not a process supervisor | Tool-dependent | No | Multi-turn agent orchestration; complementary to Awaitless |
+
+Source notes: GNU [`nohup`](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html),
+[`tmux`](https://tmux.github.io/), [`Pueue`](https://github.com/Nukesor/pueue),
+the Slurm [overview](https://slurm.schedmd.com/overview.html), and the Codex
+[Goal mode guide](https://learn.chatgpt.com/use-cases/follow-goals). If a cluster
+requires Slurm, use Slurm for allocation; Awaitless v0.1 is not a scheduler.
+
+## Reliability model
+
+- The local runner and user command have independent sessions and process
+  groups; cancellation targets the whole validated group.
+- SQLite uses WAL, and active-to-terminal transitions are transactional so
+  completion, cancellation, and stall detection cannot overwrite each other.
+- SSH wrappers atomically persist `exit_code` and `finished_at`. A lightweight
+  heartbeat handles hosts where separate SSH sessions cannot inspect the same
+  PID namespace; PID, process group, and `/proc` start time remain a fallback.
+- SSH cancellation persists intent before signaling the validated process
+  group. OpenSSH host-key verification keeps its secure defaults.
+- Suspected credential values are redacted from metadata, and the executable
+  run specification is stored with mode `0600`.
+
+States are `starting`, `running`, `stalled`, `succeeded`, `failed`, `cancelled`,
+`timed_out`, and `lost`. `--stall-timeout 20m` reports a stalled job but does
+not cancel it automatically.
+
+CLI exit codes: 0 success, 1 internal error, 2 invalid usage, 3 job failure,
+4 job/client wait timeout, 5 cancelled, 6 lost, and 7 SSH connection failure.
+
+## Development
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
+ruff check src tests benchmarks
 ```
 
-需求与验收边界见 [`docs/PRD.zh-CN.md`](docs/PRD.zh-CN.md)。
+The Codex Skill lives in
+[`skills/awaitless`](https://github.com/xpluspro/Awaitless/tree/main/skills/awaitless).
+The v0.1 product requirements are in
+[`docs/PRD.zh-CN.md`](https://github.com/xpluspro/Awaitless/blob/main/docs/PRD.zh-CN.md).
+
+## License
+
+[MIT](https://github.com/xpluspro/Awaitless/blob/main/LICENSE)

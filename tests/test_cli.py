@@ -185,6 +185,7 @@ class CLITest(unittest.TestCase):
         self.assertGreater(value["stdout_bytes"], 0)
         remote_job = remote_home / ".awaitless" / "jobs" / job
         self.assertTrue((remote_job / "pid_start_ticks").read_text().strip().isdigit())
+        self.assertTrue((remote_job / "heartbeat").is_file())
 
     def test_ssh_cancel_records_durable_marker(self) -> None:
         remote_home = self.configure_fake_ssh()
