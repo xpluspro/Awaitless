@@ -25,7 +25,9 @@ jobs:
           python-version: "3.14"
 
       - name: Install release tooling
-        run: python -m pip install --disable-pip-version-check build ruff twine
+        run: >-
+          python -m pip install --disable-pip-version-check
+          build ruff==0.15.21 twine
 
       - name: Verify tag matches package version
         env:
