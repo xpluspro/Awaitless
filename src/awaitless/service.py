@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from .util import atomic_json, parse_time, utc_now
 
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+CLIENT_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 SENSITIVE_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|API_KEY", re.I)
 
 
@@ -56,6 +58,8 @@ class Service:
         artifacts: list[str],
         log_dir: str | None = None,
         backend_options: dict[str, Any] | None = None,
+        client_request_id: str | None = None,
+        mcp_task_ttl_ms: int | None = None,
     ) -> dict[str, Any]:
         if not command:
             raise AwaitlessError("a command is required after --")
@@ -69,6 +73,19 @@ class Service:
             raise AwaitlessError("--timeout must be positive")
         if stall_timeout_seconds is not None and stall_timeout_seconds <= 0:
             raise AwaitlessError("--stall-timeout must be positive")
+        if client_request_id is not None and not CLIENT_REQUEST_ID.fullmatch(
+            client_request_id
+        ):
+            raise AwaitlessError(
+                "client_request_id must be 1-200 characters using letters, digits, "
+                "dot, underscore, colon, slash, or hyphen"
+            )
+        if mcp_task_ttl_ms is not None and (
+            isinstance(mcp_task_ttl_ms, bool)
+            or not isinstance(mcp_task_ttl_ms, int)
+            or mcp_task_ttl_ms <= 0
+        ):
+            raise AwaitlessError("MCP task TTL must be a positive integer")
         for key in env:
             if not ENV_NAME.fullmatch(key):
                 raise AwaitlessError(f"invalid environment variable name: {key!r}")
@@ -82,21 +99,18 @@ class Service:
             resolved_cwd = cwd
 
         job_dir = self.settings.jobs_dir / job_id
-        job_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        log_root: Path | None = None
         if log_dir:
             log_root = Path(log_dir).expanduser().resolve()
-            log_root.mkdir(mode=0o700, parents=True, exist_ok=True)
             logs = log_root / job_id
-            logs.mkdir(mode=0o700, exist_ok=False)
         else:
             logs = job_dir
         stdout_path = logs / "stdout.log"
         stderr_path = logs / "stderr.log"
-        stdout_path.touch(mode=0o600)
-        stderr_path.touch(mode=0o600)
         redacted_env = {key: ("<redacted>" if SENSITIVE_NAME.search(key) else value) for key, value in env.items()}
         metadata = {
             "job_id": job_id,
+            "client_request_id": client_request_id,
             "name": name,
             "backend": backend,
             "host": host,
@@ -107,7 +121,6 @@ class Service:
             "backend_options": backend_options or {},
             "created_at": utc_now(),
         }
-        atomic_json(job_dir / "metadata.json", metadata)
         spec = {
             "command": command,
             "cwd": resolved_cwd,
@@ -117,10 +130,7 @@ class Service:
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
         }
-        spec_path = job_dir / "run-spec.json"
-        atomic_json(spec_path, spec)
-        os.chmod(spec_path, 0o600)
-        self.store.create({
+        values = {
             "job_id": job_id,
             "name": name,
             "backend": backend,
@@ -135,9 +145,50 @@ class Service:
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
             "artifacts_json": json.dumps(artifacts),
-        })
-        job = self.require(job_id)
+            "mcp_task_ttl_ms": mcp_task_ttl_ms,
+        }
+        if client_request_id is not None:
+            fingerprint = _submission_fingerprint(
+                command=command,
+                backend=backend,
+                host=host,
+                cwd=resolved_cwd,
+                env=env,
+                timeout_seconds=timeout_seconds,
+                stall_timeout_seconds=stall_timeout_seconds,
+                name=name,
+                artifacts=artifacts,
+                log_dir=str(log_root) if log_root else None,
+                backend_options=backend_options or {},
+                mcp_task=mcp_task_ttl_ms is not None,
+            )
+            try:
+                job, created = self.store.reserve_submission(
+                    values,
+                    client_request_id=client_request_id,
+                    fingerprint=fingerprint,
+                )
+            except ValueError as exc:
+                raise AwaitlessError(str(exc)) from exc
+            if not created:
+                result = self.summary(job)
+                result["idempotent_replay"] = True
+                return result
+        else:
+            self.store.create(values)
+            job = self.require(job_id)
+
         try:
+            job_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+            if log_root:
+                log_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+                logs.mkdir(mode=0o700, exist_ok=False)
+            stdout_path.touch(mode=0o600)
+            stderr_path.touch(mode=0o600)
+            atomic_json(job_dir / "metadata.json", metadata)
+            spec_path = job_dir / "run-spec.json"
+            atomic_json(spec_path, spec)
+            os.chmod(spec_path, 0o600)
             if backend == "local":
                 job = self.backends[backend].submit(job, spec_path)  # type: ignore[arg-type]
             else:
@@ -150,6 +201,7 @@ class Service:
         if (job.get("error") or "").startswith("failed to start command:"):
             raise AwaitlessError(job["error"])
         result = self.summary(job)
+        result["idempotent_replay"] = False
         # The submit contract reports a successfully launched command as running even when a
         # very short command reaches its terminal state before the client receives the reply.
         if result["state"] in TERMINAL_STATES and job.get("started_at") and job.get("pid"):
@@ -297,9 +349,12 @@ class Service:
         mtimes = [path.stat().st_mtime for path in (stdout, stderr) if path.exists() and path.stat().st_size]
         local_last_output = datetime.fromtimestamp(max(mtimes), timezone.utc).isoformat().replace("+00:00", "Z") if mtimes else None
         return {
-            "job_id": job["job_id"], "name": job["name"], "backend": job["backend"], "host": job["host"],
+            "job_id": job["job_id"], "client_request_id": job.get("client_request_id"),
+            "name": job["name"], "backend": job["backend"], "host": job["host"],
             "state": job["state"], "pid": job["pid"], "backend_id": job["backend_id"],
-            "created_at": job["created_at"], "started_at": job["started_at"], "finished_at": job["finished_at"],
+            "created_at": job["created_at"], "updated_at": job["updated_at"],
+            "started_at": job["started_at"], "finished_at": job["finished_at"],
+            "mcp_task_ttl_ms": job.get("mcp_task_ttl_ms"),
             "elapsed_seconds": round(elapsed, 3), "duration_seconds": round(elapsed, 3) if job.get("finished_at") else None,
             "exit_code": job["exit_code"],
             "last_output_at": local_last_output or job.get("last_output_at"),
@@ -308,6 +363,16 @@ class Service:
             "backend_connected": True,
             "error": job["error"],
         }
+
+
+def _submission_fingerprint(**values: Any) -> str:
+    try:
+        payload = json.dumps(
+            values, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise AwaitlessError(f"submission parameters are not JSON serializable: {exc}") from exc
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _tail_file(path: Path, lines: int, max_bytes: int) -> tuple[str, bool]:

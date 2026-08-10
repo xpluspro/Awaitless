@@ -21,6 +21,8 @@ class Settings:
     log_tail_lines: int = DEFAULT_TAIL_LINES
     max_return_bytes: int = DEFAULT_MAX_RETURN_BYTES
     poll_interval: float = DEFAULT_POLL_INTERVAL
+    mcp_task_ttl_seconds: float = 604_800.0
+    mcp_task_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL
     hosts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
@@ -54,8 +56,19 @@ def load_settings(config_path: str | None = None) -> Settings:
         log_tail_lines=int(defaults.get("log_tail_lines", DEFAULT_TAIL_LINES)),
         max_return_bytes=int(defaults.get("max_return_bytes", DEFAULT_MAX_RETURN_BYTES)),
         poll_interval=float(defaults.get("poll_interval", DEFAULT_POLL_INTERVAL)),
+        mcp_task_ttl_seconds=float(defaults.get("mcp_task_ttl_seconds", 604_800)),
+        mcp_task_poll_interval_seconds=float(
+            defaults.get(
+                "mcp_task_poll_interval_seconds",
+                defaults.get("poll_interval", DEFAULT_POLL_INTERVAL),
+            )
+        ),
         hosts=dict(raw.get("hosts", {})),
     )
+    if settings.mcp_task_ttl_seconds <= 0:
+        raise ValueError("defaults.mcp_task_ttl_seconds must be positive")
+    if settings.mcp_task_poll_interval_seconds <= 0:
+        raise ValueError("defaults.mcp_task_poll_interval_seconds must be positive")
     settings.jobs_dir.mkdir(parents=True, exist_ok=True)
     return settings
 

@@ -1,14 +1,16 @@
 # Awaitless
 
+<!-- mcp-name: io.github.xpluspro/awaitless -->
+
 [![CI](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml/badge.svg)](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-面向 AI 编程 Agent 的持久化、有限返回、事件驱动作业运行器。
+**运行在你已有基础设施上的 Durable MCP Tasks——local、SSH 与 Slurm。**
 
-Awaitless 把本地、SSH 或 Slurm 长命令变成带稳定 `job_id` 的持久化作业。
-Agent 通过 MCP 提交一次、等待一次，就能收到退出码、有限日志和声明的 JSON
-Artifact，无需手写 shell 命令，也无需反复轮询并消耗上下文。
+Awaitless 把长命令变成可持久恢复的 MCP Task 与稳定作业 ID。客户端重启后仍能
+恢复任务，并获得真实退出码、有限日志和声明的 JSON Artifact；工作负载无需迁移
+到托管云 sandbox。
 
 [English](https://github.com/xpluspro/Awaitless/blob/main/README.md)
 
@@ -17,7 +19,9 @@ Artifact，无需手写 shell 命令，也无需反复轮询并消耗上下文�
 ## 为什么使用 Awaitless
 
 - **客户端退出不影响作业：** 关闭终端或中断 `wait` 不会取消任务，新客户端用同一 ID 恢复即可。
-- **Agent 原生 MCP 工具：** 标准 stdio 协议提供 `submit_job`、`wait_for_job`、
+- **兼容 MCP Tasks：** `run_job` 返回 durable Task handle，并支持
+  `tasks/get`、`tasks/update`、`tasks/cancel`、TTL 与断线恢复。
+- **保留兼容工具：** 标准 stdio 协议继续提供 `submit_job`、`wait_for_job`、
   `get_job_status`、`get_job_logs`、`cancel_job` 和 `list_jobs`。
 - **支持集群调度：** Slurm backend 持久化调度器 ID，并映射队列/accounting
   状态、退出码、取消、日志与 Artifact。
@@ -27,13 +31,20 @@ Artifact，无需手写 shell 命令，也无需反复轮询并消耗上下文�
 
 ## 安装
 
-PyPI 分发名为 `awaitless-runner`，安装后同时提供 `awaitless` CLI 和
-`awaitless-mcp` stdio Server。需要 Linux、Python 3.10+ 和 Bash；SSH/Slurm
+PyPI 分发名为 `awaitless-runner`，安装后提供 `awaitless` CLI、
+`awaitless-mcp` stdio Server，以及与 Registry 包名一致的
+`awaitless-runner` Server 别名。需要 Linux、Python 3.10+ 和 Bash；SSH/Slurm
 主机还要求本地具备 OpenSSH 的 `ssh` 与 `sftp`。
 
 ```bash
 python -m pip install awaitless-runner
 awaitless doctor --json
+```
+
+支持 MCP Registry 的客户端可以一条命令启动：
+
+```bash
+uvx awaitless-runner
 ```
 
 从源码安装：
@@ -59,12 +70,31 @@ python -m pip install -e .
 
 Server 基于官方
 [`modelcontextprotocol/python-sdk`](https://github.com/modelcontextprotocol/python-sdk)。
-Agent 随后直接用 argv 数组调用 `submit_job`，再用返回的 ID 调用
-`wait_for_job`。每次 MCP 调用都复用现有 `Service` 与 SQLite；不新增 Awaitless
-daemon、HTTP 端点或 Web 服务。关闭 stdio Server 不会停止已经提交的作业。
+支持 Tasks 的客户端以 argv 数组和稳定 `client_request_id` 调用 `run_job`，
+会立即收到 durable Task handle；现有客户端仍可使用 `submit_job`，之后再调用
+`wait_for_job`。每次 MCP 调用都复用同一 SQLite store；不新增 Awaitless daemon、
+HTTP 端点或 Web 服务。关闭 stdio Server 不会停止已经提交的作业。
 
 > 验收标准：用户安装 PyPI 包、配置一个 MCP Server 后，Agent 无需手写
 > Awaitless CLI，就能在 Slurm 集群提交任务、断线恢复并获得结构化结果。
+
+## MCP Tasks 兼容层
+
+Awaitless 基于 MCP Python SDK 2.x extension API 实现当前的
+`io.modelcontextprotocol/tasks` 扩展。Server 通过 `server/discover` 声明扩展，
+客户端通过 `_meta.io.modelcontextprotocol/clientCapabilities.extensions` 选择启用。
+
+启用后，调用 `run_job` 会立即返回 `resultType: "task"`、稳定 `taskId`、状态、
+时间戳、TTL 与建议轮询间隔。新客户端可只凭同一 handle 调用：
+
+- `tasks/get`：刷新状态，完成后内联返回最终 `CallToolResult`；
+- `tasks/cancel`：取消已验证的本地进程组、SSH 作业或 Slurm 作业；
+- `tasks/update`：确认输入响应（非交互命令不会请求输入）。
+
+Awaitless 将 `pending`/`starting`/`running` 映射成 `working`，取消映射成
+`cancelled`，其他终态映射成 `completed`。真实 Awaitless 状态与退出码保留在
+结构化工具结果中，因此非零退出不会被误判为 JSON-RPC 协议失败。详细 wire
+contract 与迁移说明见 [`docs/MCP_TASKS.md`](docs/MCP_TASKS.md)。
 
 ## 快速开始
 
@@ -77,6 +107,16 @@ awaitless submit --json --name build -- ninja -C build
 ```json
 {"job_id":"job_019F...","state":"running","backend":"local"}
 ```
+
+昂贵作业应复用调用方生成的 request ID，实现安全重试：
+
+```bash
+awaitless submit --json --client-request-id training:run-2026-08-10 -- ./train.sh
+```
+
+Awaitless 会在启动任何 backend 前，以事务方式原子保留 ID 和规范化参数指纹。
+相同请求重试会返回原 `job_id`；同一 ID 配不同参数会被拒绝，防止 SSH/MCP
+响应丢失后重复启动 GPU 或 Slurm 作业。
 
 随后只做一次阻塞式调用：
 
@@ -95,6 +135,15 @@ awaitless cancel <job-id> --grace-period 5s --json
 awaitless list --state running --json
 awaitless inspect <job-id> --json
 ```
+
+无需 Slurm 即可本地复现完整断线恢复：
+
+```bash
+awaitless demo --json
+```
+
+Demo 会提交作业、终止第一个等待客户端、仅凭 durable job ID 启动新客户端，
+并校验 JSON Artifact。
 
 ## SSH 与结构化 Artifact
 

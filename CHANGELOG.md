@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0 — 2026-08-10
+
+- Reposition Awaitless as durable MCP Tasks for infrastructure users already
+  own: local machines, SSH hosts, and Slurm clusters.
+- Add concurrency-safe `client_request_id` submission. Identical retries return
+  one stable job; conflicting reuse is rejected before backend side effects.
+- Add experimental `io.modelcontextprotocol/tasks` negotiation and
+  server-directed Task handles backed directly by durable Awaitless job IDs.
+- Implement `tasks/get`, `tasks/update`, `tasks/cancel`, TTL, poll intervals,
+  status mapping, inline final tool results, and a legacy blocking fallback.
+- Add actual MCP SDK protocol tests for capability gates, disconnect recovery,
+  retry replay, result retrieval, cancellation, and expiry.
+- Add `awaitless demo`, which kills one waiting client and proves a new client
+  can recover the job and JSON Artifact using only its durable ID.
+- Add official MCP Registry metadata, PyPI ownership proof, a Registry-compatible
+  `uvx awaitless-runner` alias, contribution guidance, and MCP Tasks docs.
+- Extend the tag workflow to create GitHub Releases and publish Registry metadata
+  with GitHub Actions OIDC after PyPI Trusted Publishing succeeds.
+
 ## 0.2.0 — 2026-08-10
 
 - Add an official-SDK stdio MCP server with six durable job tools.

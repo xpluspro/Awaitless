@@ -164,6 +164,55 @@ class CLITest(unittest.TestCase):
         )
         self.assertIn("must be positive", json.loads(result.stderr)["error"])
 
+    def test_idempotent_submit_returns_original_job_and_rejects_conflict(self) -> None:
+        work = Path(self.temp.name) / "idempotent-work"
+        work.mkdir()
+        source = (
+            "from pathlib import Path; import time; time.sleep(.2); "
+            "p=Path('launches.txt'); p.write_text((p.read_text() if p.exists() else '')+'x')"
+        )
+        arguments = (
+            "submit",
+            "--json",
+            "--client-request-id",
+            "expensive:gpu:case-1",
+            "--cwd",
+            str(work),
+            "--",
+            sys.executable,
+            "-c",
+            source,
+        )
+        first = json.loads(self.run_cli(*arguments).stdout)
+        replay = json.loads(self.run_cli(*arguments).stdout)
+        self.assertEqual(replay["job_id"], first["job_id"])
+        self.assertFalse(first["idempotent_replay"])
+        self.assertTrue(replay["idempotent_replay"])
+        self.run_cli("wait", first["job_id"], "--json")
+        self.assertEqual((work / "launches.txt").read_text(encoding="utf-8"), "x")
+
+        conflict = self.run_cli(
+            "submit",
+            "--json",
+            "--client-request-id",
+            "expensive:gpu:case-1",
+            "--",
+            "true",
+            expected=2,
+        )
+        self.assertIn("different submission parameters", conflict.stderr)
+
+    def test_demo_kills_waiter_and_recovers_from_new_client(self) -> None:
+        result = self.run_cli(
+            "demo", "--duration", "0.35s", "--interrupt-after", "0.05s", "--json"
+        )
+        value = json.loads(result.stdout)
+        self.assertTrue(value["ok"])
+        self.assertTrue(value["first_waiter_terminated"])
+        self.assertTrue(value["recovered_by_new_client"])
+        self.assertEqual(value["state"], "succeeded")
+        self.assertTrue(value["parsed_results"]["demo_recovered"])
+
     def test_ssh_wrapper_recovers_status_logs_and_artifact(self) -> None:
         remote_home = self.configure_fake_ssh()
         fail_once = Path(self.temp.name) / "fail-ssh-once"

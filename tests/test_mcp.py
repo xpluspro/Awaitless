@@ -8,11 +8,28 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 try:
-    from mcp import ClientSession, StdioServerParameters
+    from mcp import Client, ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
+    from mcp.shared.exceptions import MCPError
+
+    from awaitless.mcp_server import server as inprocess_server
+    from awaitless.mcp_tasks import (
+        TASKS_EXTENSION_ID,
+        TASKS_MISSING_CAPABILITY,
+        AwaitlessTasksClientExtension,
+        CancelTaskParams,
+        CancelTaskRequest,
+        CreateTaskResult,
+        GetTaskParams,
+        GetTaskRequest,
+        TaskAck,
+        TaskResult,
+    )
 except ModuleNotFoundError:
+    Client = None  # type: ignore[assignment,misc]
     ClientSession = None  # type: ignore[assignment,misc]
     StdioServerParameters = None  # type: ignore[assignment,misc]
     stdio_client = None  # type: ignore[assignment]
@@ -62,6 +79,7 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                     {tool.name for tool in tools.tools},
                     {
                         "submit_job",
+                        "run_job",
                         "wait_for_job",
                         "get_job_status",
                         "get_job_logs",
@@ -118,6 +136,169 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
             {"job_id": cancellable["job_id"], "grace_seconds": 0.05},
         )
         self.assertEqual(cancelled["state"], "cancelled")
+
+    async def test_tasks_extension_disconnect_replay_and_inline_result(self) -> None:
+        assert Client is not None
+        arguments = {
+            "command": [
+                sys.executable,
+                "-c",
+                (
+                    "from pathlib import Path; import time; time.sleep(.5); "
+                    "Path('task-result.json').write_text('{\"tasks\": true}'); "
+                    "print('tasks-resume-ok')"
+                ),
+            ],
+            "client_request_id": "mcp-task:disconnect:1",
+            "cwd": str(self.work),
+            "artifacts": ["task-result.json"],
+        }
+        with patch.dict(os.environ, self.environment, clear=False):
+            async with Client(
+                inprocess_server,
+                mode="auto",
+                extensions=[AwaitlessTasksClientExtension()],
+            ) as client:
+                self.assertIn(
+                    TASKS_EXTENSION_ID, client.server_capabilities.extensions or {}
+                )
+                created = await client.session.call_tool(
+                    "run_job", arguments, allow_claimed=True
+                )
+                self.assertIsInstance(created, CreateTaskResult)
+                assert isinstance(created, CreateTaskResult)
+                self.assertEqual(created.result_type, "task")
+                self.assertEqual(created.status, "working")
+                task_id = created.task_id
+
+            # A server policy change is not a change to the client's logical
+            # request. The replay must still resolve to the original task.
+            Path(self.environment["AWAITLESS_CONFIG"]).write_text(
+                "[defaults]\npoll_interval = 0.02\nmcp_task_ttl_seconds = 300\n",
+                encoding="utf-8",
+            )
+
+            # A fresh client retries the creation request after a hypothetical
+            # lost response. The idempotency key must resolve to the same task.
+            async with Client(
+                inprocess_server,
+                mode="auto",
+                extensions=[AwaitlessTasksClientExtension()],
+            ) as resumed:
+                replay = await resumed.session.call_tool(
+                    "run_job", arguments, allow_claimed=True
+                )
+                self.assertIsInstance(replay, CreateTaskResult)
+                assert isinstance(replay, CreateTaskResult)
+                self.assertEqual(replay.task_id, task_id)
+
+                while True:
+                    current = await resumed.session.send_request(
+                        GetTaskRequest(params=GetTaskParams(task_id=task_id)),
+                        TaskResult,
+                        request_read_timeout_seconds=5,
+                    )
+                    if current.status != "working":
+                        break
+                    await asyncio.sleep(0.02)
+                self.assertEqual(current.status, "completed")
+                assert current.result is not None
+                structured = current.result["structuredContent"]
+                self.assertEqual(structured["state"], "succeeded")
+                self.assertEqual(structured["stdout_tail"], "tasks-resume-ok\n")
+                self.assertEqual(structured["parsed_results"], {"tasks": True})
+                resolved = await resumed.call_tool("run_job", arguments)
+                self.assertFalse(resolved.is_error)
+                self.assertEqual(resolved.structured_content["job_id"], task_id)
+
+    async def test_tasks_capability_gate_blocking_fallback_cancel_and_ttl(self) -> None:
+        assert Client is not None
+        with patch.dict(os.environ, self.environment, clear=False):
+            async with Client(inprocess_server, mode="auto") as legacy:
+                with self.assertRaises(MCPError) as missing:
+                    await legacy.session.send_request(
+                        GetTaskRequest(params=GetTaskParams(task_id="job_unknown")),
+                        TaskResult,
+                    )
+                self.assertEqual(missing.exception.code, TASKS_MISSING_CAPABILITY)
+
+                blocking = await legacy.call_tool(
+                    "run_job",
+                    {
+                        "command": [sys.executable, "-c", "print('blocking-fallback')"],
+                        "client_request_id": "mcp-task:blocking-fallback",
+                    },
+                )
+                self.assertFalse(blocking.is_error)
+                self.assertEqual(blocking.structured_content["state"], "succeeded")
+
+            async with Client(
+                inprocess_server,
+                mode="auto",
+                extensions=[AwaitlessTasksClientExtension()],
+            ) as tasks_client:
+                created = await tasks_client.session.call_tool(
+                    "run_job",
+                    {
+                        "command": [sys.executable, "-c", "import time; time.sleep(30)"],
+                        "client_request_id": "mcp-task:cancel",
+                    },
+                    allow_claimed=True,
+                )
+                assert isinstance(created, CreateTaskResult)
+                ack = await tasks_client.session.send_request(
+                    CancelTaskRequest(
+                        params=CancelTaskParams(task_id=created.task_id)
+                    ),
+                    TaskAck,
+                )
+                self.assertEqual(ack.result_type, "complete")
+                cancelled = await tasks_client.session.send_request(
+                    GetTaskRequest(params=GetTaskParams(task_id=created.task_id)),
+                    TaskResult,
+                )
+                self.assertEqual(cancelled.status, "cancelled")
+
+            config = Path(self.environment["AWAITLESS_CONFIG"])
+            config.write_text(
+                "[defaults]\n"
+                "poll_interval = 0.02\n"
+                "mcp_task_poll_interval_seconds = 0.02\n"
+                "mcp_task_ttl_seconds = 0.6\n",
+                encoding="utf-8",
+            )
+            async with Client(
+                inprocess_server,
+                mode="auto",
+                extensions=[AwaitlessTasksClientExtension()],
+            ) as ttl_client:
+                expiring = await ttl_client.session.call_tool(
+                    "run_job",
+                    {
+                        "command": [sys.executable, "-c", "print('expires')"],
+                        "client_request_id": "mcp-task:ttl",
+                    },
+                    allow_claimed=True,
+                )
+                assert isinstance(expiring, CreateTaskResult)
+                self.assertEqual(expiring.ttl_ms, 600)
+                await asyncio.sleep(0.65)
+                with self.assertRaises(MCPError) as expired:
+                    await ttl_client.session.send_request(
+                        GetTaskRequest(params=GetTaskParams(task_id=expiring.task_id)),
+                        TaskResult,
+                    )
+                self.assertEqual(expired.exception.code, -32602)
+                with self.assertRaises(MCPError) as expired_replay:
+                    await ttl_client.session.call_tool(
+                        "run_job",
+                        {
+                            "command": [sys.executable, "-c", "print('expires')"],
+                            "client_request_id": "mcp-task:ttl",
+                        },
+                        allow_claimed=True,
+                    )
+                self.assertEqual(expired_replay.exception.code, -32602)
 
 
 if __name__ == "__main__":

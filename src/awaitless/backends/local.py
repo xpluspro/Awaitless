@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -26,29 +27,48 @@ class LocalBackend:
             start_new_session=True,
             close_fds=True,
         )
-        self.store.update(
-            job["job_id"],
-            runner_pid=runner.pid,
-            runner_start_ticks=process_start_ticks(runner.pid),
-        )
-        deadline = time.monotonic() + 4.0
-        while time.monotonic() < deadline:
+        try:
+            self.store.update(
+                job["job_id"],
+                runner_pid=runner.pid,
+                runner_start_ticks=process_start_ticks(runner.pid),
+            )
+            deadline = time.monotonic() + 4.0
+            while time.monotonic() < deadline:
+                current = self.store.get(job["job_id"])
+                assert current
+                if current["state"] in {
+                    "running",
+                    "succeeded",
+                    "failed",
+                    "timed_out",
+                }:
+                    return current
+                if current["error"]:
+                    return current
+                if runner.poll() is not None:
+                    break
+                time.sleep(0.03)
             current = self.store.get(job["job_id"])
             assert current
-            if current["state"] in {"running", "succeeded", "failed", "timed_out"}:
-                return current
-            if current["error"]:
-                return current
-            if runner.poll() is not None:
-                break
-            time.sleep(0.03)
-        current = self.store.get(job["job_id"])
-        assert current
-        if current["state"] == "starting":
-            current = self.store.update_if_active(
-                job["job_id"], state="failed", finished_at=utc_now(), error="local runner failed to start"
-            )
-        return current
+            if current["state"] == "starting":
+                current = self.store.update_if_active(
+                    job["job_id"],
+                    state="failed",
+                    finished_at=utc_now(),
+                    error="local runner failed to start",
+                )
+            return current
+        finally:
+            # The runner is deliberately detached from the MCP/CLI client. Keep
+            # its Popen object alive in a daemon reaper so a long-lived server
+            # neither emits ResourceWarning nor accumulates zombie runners.
+            if runner.poll() is None:
+                threading.Thread(
+                    target=runner.wait,
+                    name=f"awaitless-reap-{runner.pid}",
+                    daemon=True,
+                ).start()
 
     def refresh(self, job: dict[str, Any]) -> dict[str, Any]:
         if job["state"] in TERMINAL_STATES:

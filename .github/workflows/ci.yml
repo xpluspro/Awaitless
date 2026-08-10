@@ -76,6 +76,7 @@ jobs:
 
       - name: Validate checked-in evidence
         run: |
+          python -m json.tool server.json >/dev/null
           python -m json.tool assets/demo-session.json >/dev/null
           python -m json.tool assets/mcp-slurm-demo.json >/dev/null
           python -m json.tool benchmarks/results/polling-vs-awaitless.json >/dev/null
@@ -101,6 +102,13 @@ jobs:
           python metric/baselines/tmux_job.py --help >/dev/null
           python scripts/create_demo_gif.py --help >/dev/null
           python scripts/mcp_slurm_demo.py --help >/dev/null
+
+      - name: Validate MCP Registry metadata
+        run: |
+          curl -fsSL \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher validate server.json
 
       - name: Build wheel and source distribution
         run: python -m build

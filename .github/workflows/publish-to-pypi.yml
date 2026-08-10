@@ -1,4 +1,4 @@
-name: Publish Python distribution to PyPI
+name: Release Awaitless
 
 on:
   push:
@@ -87,7 +87,14 @@ jobs:
           PY
 
       - name: Run Ruff
-        run: ruff check src tests benchmarks scripts
+        run: ruff check src tests benchmarks scripts metric
+
+      - name: Validate MCP Registry metadata
+        run: |
+          curl -fsSL \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher validate server.json
 
       - name: Build wheel and source distribution
         run: python -m build
@@ -127,3 +134,77 @@ jobs:
 
       - name: Publish distributions
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Create release with distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ github.ref_name }}" dist/*
+          --repo "${{ github.repository }}"
+          --title "Awaitless ${{ github.ref_name }}"
+          --verify-tag
+          --generate-notes
+
+  mcp-registry:
+    name: Publish to official MCP Registry
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install MCP publisher
+        run: |
+          curl -fsSL \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Authenticate with GitHub Actions OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish Registry metadata after PyPI propagation
+        env:
+          SERVER_NAME: io.github.xpluspro/awaitless
+          SERVER_VERSION: ${{ github.ref_name }}
+        run: |
+          SERVER_VERSION="${SERVER_VERSION#v}"
+          for attempt in $(seq 1 18); do
+            if curl -fsSL --get \
+              --data-urlencode "search=$SERVER_NAME" \
+              https://registry.modelcontextprotocol.io/v0.1/servers \
+              | jq -e --arg name "$SERVER_NAME" --arg version "$SERVER_VERSION" \
+                '.servers[]? | select(.server.name == $name and .server.version == $version)' \
+                >/dev/null; then
+              echo "$SERVER_NAME $SERVER_VERSION is already published"
+              exit 0
+            fi
+            if ./mcp-publisher publish server.json; then
+              exit 0
+            fi
+            echo "Registry publish attempt $attempt is waiting for PyPI propagation"
+            sleep 10
+          done
+          echo "MCP Registry publication did not succeed after 18 attempts" >&2
+          exit 1

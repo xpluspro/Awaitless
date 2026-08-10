@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awaitless-runner"
-version = "0.2.0"
-description = "Event-driven durable jobs for AI coding agents"
+version = "0.3.0"
+description = "Durable MCP Tasks for local, SSH, and Slurm infrastructure"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -41,6 +41,9 @@ Issues = "https://github.com/xpluspro/Awaitless/issues"
 [project.scripts]
 awaitless = "awaitless.cli:main"
 awaitless-mcp = "awaitless.mcp_server:main"
+# Matching the distribution name lets MCP Registry clients launch the stdio
+# server directly with `uvx awaitless-runner`.
+awaitless-runner = "awaitless.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

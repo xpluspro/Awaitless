@@ -36,15 +36,21 @@ def main() -> int:
     mcp_executable = Path(sys.executable).with_name("awaitless-mcp")
     if not mcp_executable.is_file():
         raise RuntimeError(f"awaitless-mcp console script is missing: {mcp_executable}")
-    mcp_help = subprocess.run(
-        [str(mcp_executable), "--help"],
-        text=True,
-        capture_output=True,
-        timeout=10,
-        check=False,
-    )
-    if mcp_help.returncode != 0 or "stdio MCP server" not in mcp_help.stdout:
-        raise RuntimeError(f"awaitless-mcp entry point failed: {mcp_help.stderr}")
+    registry_executable = Path(sys.executable).with_name("awaitless-runner")
+    for server_executable in (mcp_executable, registry_executable):
+        if not server_executable.is_file():
+            raise RuntimeError(f"MCP console script is missing: {server_executable}")
+        mcp_help = subprocess.run(
+            [str(server_executable), "--help"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        if mcp_help.returncode != 0 or "stdio MCP server" not in mcp_help.stdout:
+            raise RuntimeError(
+                f"MCP entry point failed ({server_executable}): {mcp_help.stderr}"
+            )
 
     expected_artifact = {"installed_wheel": True, "version": version}
     artifact_source = json.dumps(expected_artifact, separators=(",", ":"))
@@ -98,6 +104,21 @@ def main() -> int:
             raise RuntimeError(f"installed-wheel smoke test failed: {completed}")
         if not completed.get("artifacts", [{}])[0].get("exists"):
             raise RuntimeError(f"declared Artifact was not returned: {completed}")
+
+        demo = run(
+            [
+                str(executable),
+                "demo",
+                "--duration",
+                "0.25",
+                "--interrupt-after",
+                "0.05",
+                "--json",
+            ],
+            env=environment,
+        )
+        if demo.get("recovered_by_new_client") is not True:
+            raise RuntimeError(f"installed-wheel recovery demo failed: {demo}")
 
     print(json.dumps({"ok": True, "version": version}, separators=(",", ":")))
     return 0

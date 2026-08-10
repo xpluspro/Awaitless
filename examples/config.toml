@@ -4,6 +4,9 @@ backend = "local"
 log_tail_lines = 200
 max_return_bytes = 65536
 poll_interval = 2
+# MCP Task handles remain queryable for seven days by default.
+mcp_task_ttl_seconds = 604800
+mcp_task_poll_interval_seconds = 2
 
 [hosts.example]
 hostname = "gpu.example.com"

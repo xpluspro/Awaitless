@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
+import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -43,6 +46,10 @@ def parser() -> argparse.ArgumentParser:
         help="per-job Slurm option (for example partition=gpu or gres=gpu:1)",
     )
     submit.add_argument("--name")
+    submit.add_argument(
+        "--client-request-id",
+        help="idempotency key; a retry with identical parameters returns the original job",
+    )
     submit.add_argument("--json", action="store_true")
     submit.add_argument("command", nargs=argparse.REMAINDER)
 
@@ -78,6 +85,13 @@ def parser() -> argparse.ArgumentParser:
 
     doctor = commands.add_parser("doctor", help="check local and SSH prerequisites")
     doctor.add_argument("--json", action="store_true")
+
+    demo = commands.add_parser(
+        "demo", help="submit locally, kill one waiter, and recover from a new client"
+    )
+    demo.add_argument("--duration", default="1.2s")
+    demo.add_argument("--interrupt-after", default="0.15s")
+    demo.add_argument("--json", action="store_true")
     return root
 
 
@@ -126,6 +140,103 @@ def _human_job(job: dict[str, Any]) -> str:
     return "\t".join(str(field) for field in fields if field != "")
 
 
+def _demo(
+    service: Service,
+    *,
+    config_path: str | None,
+    duration: float,
+    interrupt_after: float,
+) -> dict[str, Any]:
+    if duration <= 0:
+        raise AwaitlessError("--duration must be positive")
+    if interrupt_after <= 0 or interrupt_after >= duration:
+        raise AwaitlessError("--interrupt-after must be positive and shorter than --duration")
+
+    marker = secrets.token_hex(8)
+    client_request_id = f"demo:{marker}"
+    work = service.settings.data_dir / "demo-work" / marker
+    work.mkdir(mode=0o700, parents=True, exist_ok=False)
+    payload = json.dumps({"demo_recovered": True, "marker": marker})
+    source = (
+        "import json,time; from pathlib import Path; "
+        f"time.sleep({duration!r}); "
+        f"Path('result.json').write_text({payload!r}, encoding='utf-8'); "
+        f"print('AWAITLESS_DEMO_RECOVERED={marker}')"
+    )
+    submitted = service.submit(
+        job_id=new_job_id(),
+        command=[sys.executable, "-c", source],
+        backend="local",
+        host=None,
+        cwd=str(work),
+        env={},
+        timeout_seconds=duration + 10,
+        stall_timeout_seconds=None,
+        name="awaitless-recovery-demo",
+        artifacts=["result.json"],
+        client_request_id=client_request_id,
+    )
+
+    command = [sys.executable, "-m", "awaitless"]
+    if config_path:
+        command.extend(["--config", config_path])
+    command.extend(["wait", submitted["job_id"], "--json"])
+    waiter = subprocess.Popen(
+        command,
+        cwd=Path.cwd(),
+        env=os.environ.copy(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(interrupt_after)
+    first_waiter_terminated = waiter.poll() is None
+    if first_waiter_terminated:
+        waiter.terminate()
+    try:
+        waiter.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        waiter.kill()
+        waiter.communicate(timeout=5)
+    if not first_waiter_terminated:
+        raise AwaitlessError("demo task finished before the first client could be interrupted")
+
+    resumed = subprocess.run(
+        command,
+        cwd=Path.cwd(),
+        env=os.environ.copy(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+        timeout=duration + 15,
+    )
+    if resumed.returncode != 0:
+        detail = (resumed.stderr or resumed.stdout).strip()[-2000:]
+        raise AwaitlessError(f"new demo client failed to recover the job: {detail}")
+    try:
+        final = json.loads(resumed.stdout)
+    except json.JSONDecodeError as exc:
+        raise AwaitlessError("new demo client returned invalid JSON") from exc
+    expected = {"demo_recovered": True, "marker": marker}
+    if final.get("state") != "succeeded" or final.get("parsed_results") != expected:
+        raise AwaitlessError("new demo client did not recover the expected result")
+    return {
+        "ok": True,
+        "job_id": submitted["job_id"],
+        "client_request_id": client_request_id,
+        "first_waiter_terminated": True,
+        "recovered_by_new_client": True,
+        "state": final["state"],
+        "exit_code": final["exit_code"],
+        "stdout_tail": final["stdout_tail"],
+        "parsed_results": final["parsed_results"],
+        "work_dir": str(work),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     json_mode = bool(getattr(args, "json", False) or args.global_json)
@@ -148,8 +259,19 @@ def main(argv: list[str] | None = None) -> int:
                 stall_timeout_seconds=parse_duration(args.stall_timeout), name=args.name,
                 artifacts=args.artifact, log_dir=args.log_dir,
                 backend_options=_slurm_options(args.slurm_option),
+                client_request_id=args.client_request_id,
             )
-            output = {key: result[key] for key in ("job_id", "state", "backend")}
+            output = {
+                key: result[key]
+                for key in (
+                    "job_id",
+                    "state",
+                    "backend",
+                    "client_request_id",
+                    "idempotent_replay",
+                )
+                if result.get(key) is not None
+            }
             _print(output, json_mode, quiet=args.quiet)
             return 0
         if args.action == "wait":
@@ -219,6 +341,24 @@ def main(argv: list[str] | None = None) -> int:
             }
             _print(result, json_mode, quiet=args.quiet)
             return 0 if result["ok"] else 1
+        if args.action == "demo":
+            result = _demo(
+                service,
+                config_path=args.config,
+                duration=parse_duration(args.duration) or 0,
+                interrupt_after=parse_duration(args.interrupt_after) or 0,
+            )
+            if json_mode:
+                _print(result, True, quiet=args.quiet)
+            elif not args.quiet:
+                print(f"submitted {result['job_id']}")
+                print("terminated the first waiting client; managed job kept running")
+                print(
+                    "new client recovered "
+                    f"state={result['state']} exit={result['exit_code']} "
+                    f"artifact={json.dumps(result['parsed_results'], ensure_ascii=False)}"
+                )
+            return 0
         return 2
     except SSHError as exc:
         _error(str(exc), json_mode)

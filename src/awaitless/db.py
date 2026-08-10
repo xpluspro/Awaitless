@@ -12,6 +12,8 @@ from .util import utc_now
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY,
+    client_request_id TEXT,
+    submission_fingerprint TEXT,
     name TEXT,
     backend TEXT NOT NULL,
     host TEXT,
@@ -38,6 +40,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     stderr_bytes INTEGER NOT NULL DEFAULT 0,
     last_output_at TEXT,
     artifacts_json TEXT NOT NULL DEFAULT '[]',
+    mcp_task_ttl_ms INTEGER,
     error TEXT,
     updated_at TEXT NOT NULL
 );
@@ -72,9 +75,16 @@ class Store:
             ("stdout_bytes", "INTEGER NOT NULL DEFAULT 0"),
             ("stderr_bytes", "INTEGER NOT NULL DEFAULT 0"),
             ("last_output_at", "TEXT"),
+            ("client_request_id", "TEXT"),
+            ("submission_fingerprint", "TEXT"),
+            ("mcp_task_ttl_ms", "INTEGER"),
         ):
             if column not in existing:
                 self.connection.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS jobs_client_request_id_idx "
+            "ON jobs(client_request_id) WHERE client_request_id IS NOT NULL"
+        )
 
     def close(self) -> None:
         self.connection.close()
@@ -82,21 +92,73 @@ class Store:
     def create(self, values: dict[str, Any]) -> None:
         now = utc_now()
         row = dict(values, created_at=values.get("created_at", now), updated_at=now)
-        columns = ", ".join(row)
-        placeholders = ", ".join("?" for _ in row)
         self.connection.execute("BEGIN IMMEDIATE")
         try:
-            self.connection.execute(
-                f"INSERT INTO jobs ({columns}) VALUES ({placeholders})", tuple(row.values())
-            )
-            self.connection.execute(
-                "INSERT INTO state_events(job_id,state,occurred_at) VALUES(?,?,?)",
-                (row["job_id"], row["state"], now),
-            )
+            self._insert(row, now)
             self.connection.commit()
         except Exception:
             self.connection.rollback()
             raise
+
+    def reserve_submission(
+        self, values: dict[str, Any], *, client_request_id: str, fingerprint: str
+    ) -> tuple[dict[str, Any], bool]:
+        """Atomically reserve an idempotency key before any backend side effects.
+
+        The returned boolean is true only for the process that inserted the job.
+        Replays with the same fingerprint receive the existing row; reusing a key
+        for a different request is rejected rather than starting ambiguous work.
+        """
+        now = utc_now()
+        row = dict(
+            values,
+            client_request_id=client_request_id,
+            submission_fingerprint=fingerprint,
+            created_at=values.get("created_at", now),
+            updated_at=now,
+        )
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self.connection.execute(
+                "SELECT * FROM jobs WHERE client_request_id=?", (client_request_id,)
+            ).fetchone()
+            if existing:
+                decoded = self._decode(existing)
+                if decoded.get("submission_fingerprint") != fingerprint:
+                    raise ValueError(
+                        f"client_request_id {client_request_id!r} was already used "
+                        "with different submission parameters"
+                    )
+                self.connection.commit()
+                return decoded, False
+            self._insert(row, now)
+            inserted = self.connection.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (row["job_id"],)
+            ).fetchone()
+            assert inserted
+            decoded = self._decode(inserted)
+            self.connection.commit()
+            return decoded, True
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def get_by_client_request_id(self, client_request_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM jobs WHERE client_request_id=?", (client_request_id,)
+        ).fetchone()
+        return self._decode(row) if row else None
+
+    def _insert(self, row: dict[str, Any], occurred_at: str) -> None:
+        columns = ", ".join(row)
+        placeholders = ", ".join("?" for _ in row)
+        self.connection.execute(
+            f"INSERT INTO jobs ({columns}) VALUES ({placeholders})", tuple(row.values())
+        )
+        self.connection.execute(
+            "INSERT INTO state_events(job_id,state,occurred_at) VALUES(?,?,?)",
+            (row["job_id"], row["state"], occurred_at),
+        )
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         row = self.connection.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()

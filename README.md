@@ -1,15 +1,16 @@
 # Awaitless
 
+<!-- mcp-name: io.github.xpluspro/awaitless -->
+
 [![CI](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml/badge.svg)](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-Durable, bounded, event-driven jobs for AI coding agents.
+**Durable MCP Tasks on infrastructure you already own — local, SSH, and Slurm.**
 
-Awaitless turns a long local, SSH, or Slurm command into a persistent job with
-a stable `job_id`. An agent calls MCP once to submit, once to wait, and receives
-the exit code, bounded logs, and declared JSON Artifacts—without writing shell
-commands or repeatedly spending context on polling.
+Awaitless turns a long command into a persistent MCP Task and stable job ID.
+The task survives client restarts and returns its exit code, bounded logs, and
+declared JSON Artifacts without moving the workload into a hosted sandbox.
 
 [简体中文](https://github.com/xpluspro/Awaitless/blob/main/README.zh-CN.md)
 
@@ -19,8 +20,11 @@ commands or repeatedly spending context on polling.
 
 - **Survives the client:** closing the terminal or interrupting `wait` does not
   cancel the managed job. Reuse the same ID from a new client.
-- **Agent-native MCP tools:** `submit_job`, `wait_for_job`, `get_job_status`,
-  `get_job_logs`, `cancel_job`, and `list_jobs` use the standard stdio protocol.
+- **MCP Tasks compatibility:** `run_job` exposes a durable Task handle with
+  `tasks/get`, `tasks/update`, `tasks/cancel`, TTL, and reconnect recovery.
+- **Backward-compatible MCP tools:** `submit_job`, `wait_for_job`,
+  `get_job_status`, `get_job_logs`, `cancel_job`, and `list_jobs` remain
+  available over stdio.
 - **Schedules cluster work:** the Slurm backend persists scheduler IDs and maps
   queue/accounting state, exit codes, cancellation, logs, and Artifacts.
 - **Returns bounded context:** stdout and stderr tails share a configurable byte
@@ -32,13 +36,20 @@ commands or repeatedly spending context on polling.
 
 ## Install
 
-The distribution name is `awaitless-runner`. It installs the `awaitless` CLI
-and `awaitless-mcp` stdio server. Awaitless requires Linux, Python 3.10+, and
+The distribution name is `awaitless-runner`. It installs the `awaitless` CLI,
+the `awaitless-mcp` stdio server, and the Registry-compatible
+`awaitless-runner` server alias. Awaitless requires Linux, Python 3.10+, and
 Bash. SSH and Slurm hosts also require OpenSSH (`ssh` and `sftp`) locally.
 
 ```bash
 python -m pip install awaitless-runner
 awaitless doctor --json
+```
+
+MCP Registry clients can launch the published server in one command:
+
+```bash
+uvx awaitless-runner
 ```
 
 From a source checkout:
@@ -65,14 +76,39 @@ your client's configuration format):
 
 The server uses the official
 [`modelcontextprotocol/python-sdk`](https://github.com/modelcontextprotocol/python-sdk).
-The Agent can now call `submit_job` with an argv array and later call
-`wait_for_job` with the returned ID. Each MCP invocation opens the existing
-`Service` and SQLite store; there is no Awaitless daemon, HTTP endpoint, or Web
-service. Stopping the stdio server does not stop a submitted job.
+Tasks-aware clients call `run_job` with an argv array and a stable
+`client_request_id`; they immediately receive a durable Task handle. Existing
+clients can continue to call `submit_job` and later `wait_for_job`. Each MCP
+invocation opens the same SQLite store; there is no Awaitless daemon, HTTP
+endpoint, or Web service. Stopping the stdio server does not stop a submitted
+job.
 
 > Acceptance criterion: install the PyPI package and configure one MCP server;
 > the Agent can submit to Slurm, survive a client disconnect, and receive a
 > structured result without writing Awaitless CLI commands.
+
+## MCP Tasks compatibility
+
+Awaitless implements the current `io.modelcontextprotocol/tasks` extension on
+top of the MCP Python SDK 2.x extension API. It advertises the extension through
+`server/discover`; a client opts in through
+`_meta.io.modelcontextprotocol/clientCapabilities.extensions`.
+
+For opted-in clients, `tools/call` on `run_job` returns immediately with
+`resultType: "task"`, a stable `taskId`, status, timestamps, TTL, and suggested
+poll interval. A later client can use the same handle with:
+
+- `tasks/get` — refresh state and return the final `CallToolResult` inline;
+- `tasks/cancel` — cancel the verified local process group, SSH job, or Slurm job;
+- `tasks/update` — acknowledge input responses (command jobs never request input).
+
+Awaitless maps `pending`/`starting`/`running` to `working`, cancellation to
+`cancelled`, and all other terminal job states to `completed`. The final
+Awaitless state and real exit code remain in the structured tool result, so a
+non-zero command exit is not confused with a JSON-RPC protocol failure. The
+legacy MCP tool surface is retained as a compatibility layer. See
+[`docs/MCP_TASKS.md`](docs/MCP_TASKS.md) for the wire contract and migration
+notes.
 
 ## Quick start
 
@@ -85,6 +121,17 @@ awaitless submit --json --name build -- ninja -C build
 ```json
 {"job_id":"job_019F...","state":"running","backend":"local"}
 ```
+
+For a retry-safe expensive job, reuse a caller-generated request ID:
+
+```bash
+awaitless submit --json --client-request-id training:run-2026-08-10 -- ./train.sh
+```
+
+The ID and normalized submission fingerprint are reserved atomically before
+any backend launch. Retrying the same request returns the original `job_id`;
+reusing the ID with different arguments is rejected. This prevents a lost SSH
+or MCP response from launching a second GPU or Slurm job.
 
 Then make one blocking call:
 
@@ -104,6 +151,15 @@ awaitless cancel <job-id> --grace-period 5s --json
 awaitless list --state running --json
 awaitless inspect <job-id> --json
 ```
+
+Run the five-minute recovery story locally, without Slurm:
+
+```bash
+awaitless demo --json
+```
+
+The demo submits a job, terminates the first waiting client, starts a fresh
+client using only the durable job ID, and verifies the JSON Artifact.
 
 ## SSH and structured Artifacts
 

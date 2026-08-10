@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from awaitless import __version__
 from metric import (
     analyze,
     analyze_long_running,
@@ -108,7 +109,9 @@ class MetricWorkloadTest(unittest.TestCase):
             summary = analyze.build_summary([output], records)
             self.assertTrue(records[0]["metrics"]["result_correct"])
             self.assertIsNone(records[0]["metrics"]["input_tokens"])
-            self.assertEqual(records[0]["environment"]["awaitless_version"], "0.2.0")
+            self.assertEqual(
+                records[0]["environment"]["awaitless_version"], __version__
+            )
             self.assertIsNone(summary["overall"]["awaitless"]["cost_per_correct_job"]["usage_tokens"])
             self.assertTrue(summary["quality"]["warnings"])
 
