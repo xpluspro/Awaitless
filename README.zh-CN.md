@@ -1,361 +1,156 @@
 # Awaitless
 
-<!-- mcp-name: io.github.xpluspro/awaitless -->
-
 [![CI](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml/badge.svg)](https://github.com/xpluspro/Awaitless/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**运行在你已有基础设施上的 Durable MCP Tasks——local、SSH 与 Slurm。**
+**别再让 Coding Agent 轮询长任务。**
 
-Awaitless 把长命令变成可持久恢复的 MCP Task 与稳定作业 ID。客户端重启后仍能
-恢复任务，并获得真实退出码、有限日志和声明的 JSON Artifact；工作负载无需迁移
-到托管云 sandbox。
+Awaitless 把本地、SSH 和 Slurm 命令变成持久任务：提交一次、断开连接，之后再取回
+退出码、有限日志和 JSON 结果。工作负载始终运行在你自己的基础设施上。
 
-[English](https://github.com/xpluspro/Awaitless/blob/main/README.md)
+[English](README.md) · [完整文档](docs/README.md) ·
+[Benchmark](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
+
+## 真实 Agent 工作负载实测
+
+| 结果 | 普通 tmux / 轮询 | Awaitless |
+|---|---:|---:|
+| 20 个配对 Agent 案例的中位工具调用 | 7 | **2（减少 71.4%）** |
+| 每个正确任务的 API usage token | 25,974.2 | **3,820.8（减少 85.3%）** |
+| 一次真实 SSH 轮询任务的 Agent 可见调用 | 13 | **2** |
+
+Agent 实验于 2026-08-10 使用相同的 DeepSeek 模型、提示词、工作负载和随机 seed。
+Awaitless 在 20/20 个案例中都正确返回了状态、退出码、Artifact 和日志契约；其中一次
+模型最终回复为空，因此严格端到端得分为 19/20。一个 319 行的增强 tmux wrapper
+也做到了两次调用，并比 Awaitless 少用 9.2% token——面对这条强基线，Awaitless
+的价值是内置且有人维护的统一协议，而不是声称永远更省 token。
+
+查看[完整 Agent 报告](metric/results/deepseek-agent-v2-report.md)、
+[benchmark 方法论](metric/README.md)，以及另一项带原始结果的
+[SSH 轮询实验](benchmarks/README.md)。
 
 ![Awaitless SSH 提交、断开、恢复与 Artifact 演示](https://raw.githubusercontent.com/xpluspro/Awaitless/main/assets/awaitless-demo.gif)
 
-## 为什么使用 Awaitless
+## 删掉 Agent 的轮询循环
 
-- **客户端退出不影响作业：** 关闭终端或中断 `wait` 不会取消任务，新客户端用同一 ID 恢复即可。
-- **兼容 MCP Tasks：** `run_job` 返回 durable Task handle，并支持
-  `tasks/get`、`tasks/update`、`tasks/cancel`、TTL 与断线恢复。
-- **保留兼容工具：** 标准 stdio 协议继续提供 `submit_job`、`wait_for_job`、
-  `get_job_status`、`get_job_logs`、`cancel_job` 和 `list_jobs`。
-- **支持集群调度：** Slurm backend 持久化调度器 ID，并映射队列/accounting
-  状态、退出码、取消、日志与 Artifact。
-- **返回量有上限：** stdout/stderr 尾部共享可配置字节预算，完整日志仍保留在磁盘。
-- **直接返回结构化结果：** 声明的 JSON Artifact 会解析为 `parsed_results`。
-- **处理真实集群边界：** SSH 存活判断采用 wrapper 自有 heartbeat，不假设不同登录会话能看到同一 PID 命名空间。
-
-## 安装
-
-PyPI 分发名为 `awaitless-runner`，安装后提供 `awaitless` CLI、
-`awaitless-mcp` stdio Server，以及与 Registry 包名一致的
-`awaitless-runner` Server 别名。需要 Linux、Python 3.10+ 和 Bash；SSH/Slurm
-主机还要求本地具备 OpenSSH 的 `ssh` 与 `sftp`。
+没有 Awaitless 时，Agent 启动任务后会反复把同一份、越来越长的日志拉回上下文：
 
 ```bash
-python -m pip install awaitless-runner
+ssh gpu 'run_benchmark > job.log 2>&1 &'
+ssh gpu 'tail -n 200 job.log'  # 再查一次……
+ssh gpu 'tail -n 200 job.log'  # 再查一次……
+```
+
+使用 Awaitless，只需提交一次、等待一次：
+
+```bash
+awaitless submit --json --host gpu --artifact results.json -- ./run_benchmark
+# {"job_id":"job_019F...","state":"running","backend":"ssh"}
+
+awaitless wait job_019F... --json
+# {"state":"succeeded","exit_code":0,"parsed_results":{...}}
+```
+
+中断 waiter、关闭 MCP 客户端或换一个全新的 Agent 会话都不会停止任务。只凭稳定
+job ID 就能恢复结果。
+
+## 30 秒体验断线恢复
+
+Awaitless 需要 Linux、Python 3.10+ 和 Bash。不做持久安装即可运行内置演示：
+
+```bash
+uvx --from awaitless-runner awaitless demo --json
+```
+
+演示会提交一个本地任务，终止第一个等待客户端，然后仅凭 job ID 从新客户端恢复，
+并校验 JSON Artifact。
+
+日常 CLI 使用：
+
+```bash
+uv tool install awaitless-runner
 awaitless doctor --json
 ```
 
-支持 MCP Registry 的客户端可以一条命令启动：
+也可以使用 `pip install awaitless-runner`。
 
-```bash
-uvx awaitless-runner
-```
+## 交给你的 Coding Agent
 
-从源码安装：
-
-```bash
-python -m pip install -e .
-```
-
-## Agent 原生 MCP 快速开始
-
-让 MCP 客户端启动安装好的 stdio 命令（最外层字段请按具体客户端格式调整）：
+在客户端配置中增加一个 stdio MCP server（按客户端格式调整最外层字段）：
 
 ```json
 {
   "mcpServers": {
     "awaitless": {
-      "command": "awaitless-mcp",
-      "args": ["--config", "/home/me/.config/awaitless/config.toml"]
+      "command": "uvx",
+      "args": ["awaitless-runner"]
     }
   }
 }
 ```
 
-Server 基于官方
-[`modelcontextprotocol/python-sdk`](https://github.com/modelcontextprotocol/python-sdk)。
-支持 Tasks 的客户端以 argv 数组和稳定 `client_request_id` 调用 `run_job`，
-会立即收到 durable Task handle；现有客户端仍可使用 `submit_job`，之后再调用
-`wait_for_job`。每次 MCP 调用都复用同一 SQLite store；不新增 Awaitless daemon、
-HTTP 端点或 Web 服务。关闭 stdio Server 不会停止已经提交的作业。
+然后让 Agent 用 Awaitless 执行长命令即可。支持 MCP Tasks 的客户端会立即获得持久
+Task handle；其他客户端使用 `submit_job`，之后调用 `wait_for_job`。昂贵任务使用相同
+`client_request_id` 重试时不会重复启动。
 
-> 验收标准：用户安装 PyPI 包、配置一个 MCP Server 后，Agent 无需手写
-> Awaitless CLI，就能在 Slurm 集群提交任务、断线恢复并获得结构化结果。
-
-## MCP Tasks 兼容层
-
-Awaitless 基于 MCP Python SDK 2.x extension API 实现当前的
-`io.modelcontextprotocol/tasks` 扩展。Server 通过 `server/discover` 声明扩展，
-客户端通过 `_meta.io.modelcontextprotocol/clientCapabilities.extensions` 选择启用。
-
-启用后，调用 `run_job` 会立即返回 `resultType: "task"`、稳定 `taskId`、状态、
-时间戳、TTL 与建议轮询间隔。新客户端可只凭同一 handle 调用：
-
-- `tasks/get`：刷新状态，完成后内联返回最终 `CallToolResult`；
-- `tasks/cancel`：取消已验证的本地进程组、SSH 作业或 Slurm 作业；
-- `tasks/update`：确认输入响应（非交互命令不会请求输入）。
-
-Awaitless 将 `pending`/`starting`/`running` 映射成 `working`，取消映射成
-`cancelled`，其他终态映射成 `completed`。真实 Awaitless 状态与退出码保留在
-结构化工具结果中，因此非零退出不会被误判为 JSON-RPC 协议失败。详细 wire
-contract 与迁移说明见 [`docs/MCP_TASKS.md`](docs/MCP_TASKS.md)。
-
-## 快速开始
-
-`submit` 会在任务结束前返回：
+直接使用 CLI 的完整流程只有两步：
 
 ```bash
-awaitless submit --json --name build -- ninja -C build
+awaitless submit --json --name tests -- python -m pytest -q
+# 保存返回的 job_id，然后：
+awaitless wait <job-id> --json
 ```
 
-```json
-{"job_id":"job_019F...","state":"running","backend":"local"}
-```
+## 一套接口，三个运行位置
 
-昂贵作业应复用调用方生成的 request ID，实现安全重试：
-
-```bash
-awaitless submit --json --client-request-id training:run-2026-08-10 -- ./train.sh
-```
-
-Awaitless 会在启动任何 backend 前，以事务方式原子保留 ID 和规范化参数指纹。
-相同请求重试会返回原 `job_id`；同一 ID 配不同参数会被拒绝，防止 SSH/MCP
-响应丢失后重复启动 GPU 或 Slurm 作业。
-
-随后只做一次阻塞式调用：
-
-```bash
-awaitless wait job_019F... --json
-```
-
-如果客户端关闭或被中断，在新客户端中对保存的 ID 重新执行同一条 `wait`；受管任务会继续运行。
-
-常用的一次性操作：
-
-```bash
-awaitless status <job-id> --json
-awaitless logs <job-id> --tail 200 --json
-awaitless cancel <job-id> --grace-period 5s --json
-awaitless list --state running --json
-awaitless inspect <job-id> --json
-```
-
-无需 Slurm 即可本地复现完整断线恢复：
-
-```bash
-awaitless demo --json
-```
-
-Demo 会提交作业、终止第一个等待客户端、仅凭 durable job ID 启动新客户端，
-并校验 JSON Artifact。
-
-## SSH 与结构化 Artifact
-
-在 `~/.config/awaitless/config.toml` 中声明主机：
-
-```toml
-[defaults]
-backend = "local"
-log_tail_lines = 200
-max_return_bytes = 65536
-poll_interval = 2
-
-[hosts.gpu]
-hostname = "gpu.example.com"
-port = 22
-user = "developer"
-identity_file = "~/.ssh/id_ed25519"
-remote_job_dir = "~/.awaitless/jobs"
-# gssapi_authentication = false
-# connect_timeout = 8
-# operation_timeout = 20
-```
-
-`operation_timeout` 是一次 SSH 控制操作的最低超时，不是任务运行上限；任务自身用
-`submit --timeout` 限制。
-
-提交远端命令并声明结果：
-
-```bash
-awaitless submit --json \
-  --host gpu \
-  --cwd /workspace/project \
-  --timeout 2h \
-  --artifact results/benchmark.json \
-  -- ./run_benchmark.sh
-```
-
-完成时，`wait --json` 会返回 Artifact 的存在性、大小和修改时间；预算内的 JSON 文件还会直接解析：
-
-```json
-{
-  "state": "succeeded",
-  "exit_code": 0,
-  "truncated": false,
-  "parsed_results": {
-    "correctness": true,
-    "latency_us": 24.7
-  }
-}
-```
-
-本地相对 Artifact 始终按提交时的工作目录解析，即使恢复等待的客户端位于其他目录。
-`--log-dir /path/to/logs` 会为每个任务创建隔离的 `/path/to/logs/<job-id>/`。
-
-## Slurm backend
-
-配置调度集群及默认资源请求：
-
-```toml
-[defaults]
-backend = "slurm"
-host = "cluster"
-poll_interval = 10
-log_tail_lines = 200
-max_return_bytes = 65536
-
-[hosts.cluster]
-hostname = "login.cluster.example"
-user = "developer"
-backend = "slurm"
-gssapi_authentication = false
-operation_timeout = 30
-slurm_accounting_grace = 120
-slurm_job_dir = ".awaitless/slurm/jobs"
-
-[hosts.cluster.slurm]
-partition = "compute"
-account = "research"
-nodes = 1
-ntasks = 1
-cpus_per_task = 1
-time = "00:30:00"
-```
-
-配置 `defaults.host` 后，MCP 调用可以同时省略 `backend` 和 `host`。
-`submit_job` 可通过 `slurm_options` 覆盖白名单内的 `account`、`constraint`、
-`cpus_per_task`、`gres`、`mem`、`nodes`、`ntasks`、`partition`、`qos` 和
-`time`。backend 通过 stdin 把 batch script 交给 `sbatch`，持久化 Slurm ID，
-用 `squeue` 查询活跃状态，用 `sacct` 恢复终态、退出码和运行时长，用
-`scancel` 取消。用户计算只会由 Slurm 投递到分配的计算节点，绝不会作为进程
-直接运行在 SSH 登录节点；独立的 SFTP 数据通道只负责创建私有作业目录，并按
-预算读取日志尾部和声明的 Artifact。
-
-状态映射如下：Slurm `PENDING` → Awaitless `pending`；活跃态 → `running`；
-`COMPLETED` → `succeeded`；`CANCELLED` → `cancelled`；`TIMEOUT`/`DEADLINE`
-→ `timed_out`；调度器、节点、启动、OOM 与抢占失败 → `failed`。`7:0` 等
-`ExitCode` 以及信号终止都会转换为进程风格退出码。
-
-### 真实 MCP → Slurm 断线恢复演示
-
-2026-08-10，两个完全独立的 MCP stdio 客户端在真实 Slurm 25.11.2 集群完成：
-
-| 阶段 | 实测结果 |
+| Backend | Awaitless 增加的能力 |
 |---|---|
-| 客户端 1 `submit_job` | Awaitless `job_019FE9CB2847AC929E0B2F`，Slurm `60597793`，`pending` |
-| 客户端 1 退出 | 没有 daemon 或 waiter 继续附着 |
-| 客户端 2 `wait_for_job` | `succeeded`，退出码 `0`，运行 `8.0s` |
-| 有限 stdout | `compute_host=node099 slurm_job_id=60597793`（43 B） |
-| JSON Artifact | 解析为 `{ "ok": true, "compute_host": "node099", "slurm_job_id": "60597793" }` |
+| **Local** | 持久进程组跟踪、取消、有限日志，以及客户端退出后的恢复。 |
+| **SSH** | 在已有主机上提供同一套任务契约；用 heartbeat 判断存活，不需要远端 daemon。 |
+| **Slurm** | 真正的 `sbatch` 调度，以及持久 Slurm ID、队列/记账状态、退出码、日志、取消和 Artifact。 |
 
-`node099` 是 Slurm 分配的计算节点。可复现脚本位于
-[`scripts/mcp_slurm_demo.py`](https://github.com/xpluspro/Awaitless/blob/main/scripts/mcp_slurm_demo.py)，
-原始结构化证据位于
-[`assets/mcp-slurm-demo.json`](https://github.com/xpluspro/Awaitless/blob/main/assets/mcp-slurm-demo.json)。
+通过 `--backend`、`--host` 或配置默认值切换目标，不需要改变 Agent 提交与取回任务的方式。
 
-## 真实实验：12 次轮询变为 2 次调用
+## 为什么不直接用 shell 或 tmux？
 
-2026-08-10 的可复现实验在真实 SSH 登录节点运行完全相同的 sleep-only workload：
-每隔 4.5 秒写一条 1 KiB 日志，共 12 条，不执行任何 CPU/GPU 高占用工作。
-传统侧完整读取累计日志快照 12 次；Awaitless 侧只调用一次 `submit` 和一次 `wait`。
+| 工具 | 最适合 | Agent 仍需自己补的能力 |
+|---|---|---|
+| 同步阻塞 shell | 短命令 | 无——不需要断线恢复和释放工具槽时就应该直接用它。 |
+| Shell 轮询 / `nohup` | 让一个简单命令留在后台 | ID、状态、退出码恢复、有限日志、取消、去重与结果解析。 |
+| `tmux` | 人类 detach/attach 交互式 shell、REPL 和 TUI | 一套可靠的非交互任务协议与 wrapper glue。 |
+| **Awaitless** | Agent 发起的构建、测试、benchmark、远程任务与集群任务 | 只需提供命令，以及可选的 JSON Artifact。 |
 
-| 实测结果 | 传统 SSH 轮询 | Awaitless |
-|---|---:|---:|
-| 启动后的轮询/检查调用 | 12 | 0 |
-| 包含启动在内、Agent 可见的 CLI 调用 | 13 | 2 |
-| 返回的逻辑日志字节 | 84,992 B | 12,288 B |
-| 重复返回的日志字节 | 72,704 B | 0 B |
-| 退出码 | 0 | 0 |
-| 解析后的 JSON Artifact | 无 | 有 |
+Awaitless 不替代交互终端，也不替代 Slurm。它为 Coding Agent 提供持久任务接口，
+需要资源调度时仍然使用 Slurm。
 
-结果是：**少返回 72,704 B 日志（85.5%）**，且 **Agent 可见的 CLI 调用从
-13 次降至 2 次（84.6%）**。传统侧 12 个日志快照分别为
-`[1024, 2048, 3072, 4096, 5120, 6144, 8192, 9216, 10240, 11264, 12288, 12288]`
-字节。这里的“调用”指 Agent 可见的 CLI 调用；Awaitless 内部 SSH 控制操作不会触发
-新的 Agent 轮次。字节数统计解码后的日志内容，不是估算 token 或网络线速字节。
+## 工作方式
 
-可运行方法和原始结果位于
-[`benchmarks/`](https://github.com/xpluspro/Awaitless/tree/main/benchmarks)。
-
-## 衡量项目价值
-
-仓库还提供了预注册的
-[`metric/`](https://github.com/xpluspro/Awaitless/tree/main/metric) 对照框架：让原生
-tmux、强 tmux wrapper 和 Awaitless 运行完全相同的随机 workload；每个 trial 保存一条
-JSONL；统一报告结果正确率、断线恢复、Agent 可见调用/字节、可用时的真实 usage token、
-进程树清理、延迟和用户自有 glue 代码量。smoke profile 只验证采集链路；对外结论还需要
-正式 evidence profile、真实 SSH 故障注入和真实 Agent API usage。
-
-第一份真实 Agent 报告见
-[`metric/results/deepseek-agent-v2-report.md`](metric/results/deepseek-agent-v2-report.md)：
-20 个配对 DeepSeek 案例中，Awaitless 相比普通 tmux 将中位工具调用减少 71.4%，每个正确
-任务的 usage token 减少 85.3%。强 tmux wrapper 在调用数上与 Awaitless 相同，每个正确
-任务的 token 还少 9.2%，但需要用户维护 319 行胶水代码。这些结论只适用于已记录的实验，
-不是对所有任务的固定节省承诺。
-
-编排层面的进一步测试见 [`metric/LONG_RUNNING.md`](metric/LONG_RUNNING.md)：它让同步
-Blocking、强并发 Blocking 和 Awaitless 执行受控的 `cargo build`、pytest、Docker build、
-`npm install` 与模型推理任务，分开测量 Agent 同步占用、batch makespan 和断线恢复。该基准
-也会如实展示直接 Blocking 更快的短任务和强并发场景，不把墙钟等待冒充模型 reasoning。
-
-## Awaitless 与其他方案
-
-| 工具 | 核心抽象 | 客户端退出后继续 | 持久状态/退出码 | Agent 友好的有限 JSON 结果 | 调度/资源分配 | 最适合 |
-|---|---|:---:|:---:|:---:|:---:|---|
-| **Awaitless** | 本地、SSH 或 Slurm 作业 ID + MCP 工具 | 是 | 是 | 是 | Slurm | 需要调度、恢复、有限日志和 Artifact 的 Agent 原生作业 |
-| **nohup** | 忽略 SIGHUP + 重定向输出 | 通常 | 手工 | 否 | 否 | 手工管理 PID/日志即可的单条 Shell 命令 |
-| **tmux** | 持久化交互终端 | 是 | 手工 | 否 | 否 | 人类离开后重新接入交互 Shell |
-| **Pueue** | daemon 支持的本地任务队列 | 是 | 是 | 部分；状态/日志 JSON | 仅本地队列 | 单机上由人操作的队列和并行任务组 |
-| **Slurm** | 集群 workload manager | 是 | 是，含 accounting | 由作业自行定义 | 是 | 分配与调度集群 CPU/GPU 资源 |
-| **Codex Goal mode** | 跨多轮的持久 Agent 目标 | 是 | 不是进程监督器 | 取决于工具 | 否 | 多轮 Agent 编排；与 Awaitless 互补 |
-
-资料说明：GNU [`nohup`](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html)、
-[`tmux`](https://tmux.github.io/)、[`Pueue`](https://github.com/Nukesor/pueue)、
-Slurm [概览](https://slurm.schedmd.com/overview.html)和 Codex
-[Goal mode 指南](https://learn.chatgpt.com/use-cases/follow-goals)。Awaitless 使用
-Slurm 完成资源分配，而不是替代集群调度器。
-
-## 可靠性模型
-
-- Local runner 与用户命令使用独立会话和进程组；取消会终止整个已校验的进程组。
-- SQLite 使用 WAL；活跃态到终态的变化通过事务保护，完成、取消和停滞检测不会互相覆盖。
-- SSH wrapper 原子保存 `exit_code` 和 `finished_at`。轻量 heartbeat 适配不同 SSH
-  会话不能查看同一 PID 命名空间的主机，PID、进程组和 `/proc` 启动时钟作为兼容回退。
-- SSH 取消会先持久化意图，再向已校验的进程组发信号；主机密钥检查沿用 OpenSSH 安全默认值。
-- Slurm 控制面的 SSH 调用严格限制为 `sbatch`/`squeue`/`sacct`/`scancel`；
-  文件通道使用 SFTP，任意用户计算只存在于已提交的 batch script 中。
-- 疑似凭证的值在元数据中会被遮蔽，实际运行规格文件权限为 `0600`。
-
-状态包括 `starting`、`running`、`stalled`、`succeeded`、`failed`、`cancelled`、
-`timed_out` 和 `lost`。`--stall-timeout 20m` 只报告停滞，不会自动取消。
-
-CLI 退出码：0 成功，1 内部错误，2 参数错误，3 作业失败，4 作业或客户端等待超时，
-5 已取消，6 状态丢失，7 SSH 连接失败。
-
-## 开发与测试
-
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
-ruff check src tests benchmarks scripts metric
+```mermaid
+flowchart LR
+    A["Coding Agent"] -->|"提交一次"| B["Awaitless MCP / CLI"]
+    B --> C[("SQLite 任务记录")]
+    B --> D{"Backend"}
+    D --> L["本地进程"]
+    D --> S["SSH 主机"]
+    D --> H["Slurm allocation"]
+    A -. "凭稳定 ID 重连" .-> C
+    C -->|"状态 + 退出码 + 有限日志 + Artifact"| A
 ```
 
-GitHub Actions 会在每次变更中覆盖 CPython 3.10–3.14，随后构建发布包、检查
-PyPI README，并通过安装后的 wheel 执行 CLI/Artifact 冒烟；版本 tag 使用
-PyPI Trusted Publishing，不在仓库保存 API token。
+Awaitless 没有 daemon、HTTP 服务或托管 sandbox。每次调用打开同一份 SQLite store；
+已提交的 runner 和调度任务独立于创建它的 stdio server。完整日志留在磁盘上，只有受限的
+尾部会进入 Agent 上下文。
 
-Codex Skill 位于
-[`skills/awaitless`](https://github.com/xpluspro/Awaitless/tree/main/skills/awaitless)，
-v0.1 产品需求位于
-[`docs/PRD.zh-CN.md`](https://github.com/xpluspro/Awaitless/blob/main/docs/PRD.zh-CN.md)，
-v0.2 Agent/Slurm 验收契约位于
-[`docs/v0.2.zh-CN.md`](https://github.com/xpluspro/Awaitless/blob/main/docs/v0.2.zh-CN.md)。
+## 完整文档
 
-## 许可证
+- [文档索引](docs/README.md)
+- [CLI、配置、SSH、Slurm、持久化、Artifact 与故障排查](docs/REFERENCE.md)
+- [MCP Tasks 协议与兼容性](docs/MCP_TASKS.md)
+- [Benchmark 定义、方法论与解释边界](metric/README.md)
+- [真实 MCP → Slurm 断线证据](docs/REFERENCE.md#real-mcp--slurm-disconnect-evidence)
+- [架构与设计取舍](docs/REFERENCE.md#architecture-and-runtime-model)
 
-[MIT](https://github.com/xpluspro/Awaitless/blob/main/LICENSE)
+## License
+
+[MIT](LICENSE)

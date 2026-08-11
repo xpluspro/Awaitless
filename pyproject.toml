@@ -34,7 +34,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/xpluspro/Awaitless"
-Documentation = "https://github.com/xpluspro/Awaitless#readme"
+Documentation = "https://github.com/xpluspro/Awaitless/tree/main/docs"
 Repository = "https://github.com/xpluspro/Awaitless.git"
 Issues = "https://github.com/xpluspro/Awaitless/issues"
 
