@@ -20,6 +20,7 @@ and implementation details.
 
 ## Product and design records
 
+- [v0.4 queue release and real-machine acceptance](v0.4.zh-CN.md)
 - [v0.2 Agent and Slurm acceptance contract](v0.2.zh-CN.md)
 - [Original product requirements](PRD.zh-CN.md)
 - [Blocking vs. Awaitless benchmark design](../metric/LONG_RUNNING.md)

@@ -144,6 +144,11 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: Download distributions
         uses: actions/download-artifact@v6
         with:
@@ -153,12 +158,21 @@ jobs:
       - name: Create release with distributions
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${{ github.ref_name }}" dist/*
-          --repo "${{ github.repository }}"
-          --title "Awaitless ${{ github.ref_name }}"
-          --verify-tag
-          --generate-notes
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="${RELEASE_TAG#v}"
+          awk -v heading="## ${version} " '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "Awaitless $RELEASE_TAG" \
+            --verify-tag \
+            --notes-file release-notes.md
 
   mcp-registry:
     name: Publish to official MCP Registry

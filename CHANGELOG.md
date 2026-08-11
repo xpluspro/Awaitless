@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-08-11
 
 - Add durable named FIFO queues for local and SSH jobs with fixed concurrency,
   non-preemptive admission, queued-job cancellation, and runtime timeouts that
@@ -9,6 +9,13 @@
   target host with daemonless queue wrappers and automatically released locks.
 - Add `awaitless queue create/list`, `submit --queue`, queue filtering, MCP queue
   tools/arguments, and expose Slurm `PENDING` consistently as `queued`.
+- Scope Awaitless queues to Local and SSH backends; SSH queue admission requires
+  `flock` on the target host.
+- Keep Slurm as the sole scheduler for Slurm jobs: `submit --queue` is rejected
+  for that backend, while scheduler `PENDING` is reported as `queued`.
+- Rename the user-visible `pending` lifecycle state to `queued` for scripts and
+  MCP clients. After a host reboot, one Awaitless invocation is required to
+  trigger recovery because Awaitless intentionally installs no boot-time daemon.
 
 ## 0.3.0 — 2026-08-10
 
