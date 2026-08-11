@@ -46,6 +46,7 @@ def parser() -> argparse.ArgumentParser:
         help="per-job Slurm option (for example partition=gpu or gres=gpu:1)",
     )
     submit.add_argument("--name")
+    submit.add_argument("--queue", help="named concurrency queue")
     submit.add_argument(
         "--client-request-id",
         help="idempotency key; a retry with identical parameters returns the original job",
@@ -77,7 +78,17 @@ def parser() -> argparse.ArgumentParser:
     listing = commands.add_parser("list", help="list jobs")
     listing.add_argument("--state")
     listing.add_argument("--host")
+    listing.add_argument("--queue")
     listing.add_argument("--json", action="store_true")
+
+    queues = commands.add_parser("queue", help="manage named concurrency queues")
+    queue_commands = queues.add_subparsers(dest="queue_action", required=True)
+    queue_create = queue_commands.add_parser("create", help="create a queue")
+    queue_create.add_argument("name")
+    queue_create.add_argument("--concurrency", required=True, type=int)
+    queue_create.add_argument("--json", action="store_true")
+    queue_list = queue_commands.add_parser("list", help="list queues")
+    queue_list.add_argument("--json", action="store_true")
 
     inspect = commands.add_parser("inspect", help="show job metadata and state history")
     inspect.add_argument("job_id")
@@ -126,7 +137,7 @@ def _print(value: Any, json_mode: bool, *, quiet: bool = False) -> None:
         print(value["job_id"] if len(value) <= 3 else _human_job(value))
     elif isinstance(value, list):
         for item in value:
-            print(_human_job(item))
+            print(_human_job(item) if "job_id" in item else _human_queue(item))
     else:
         print(value)
 
@@ -135,9 +146,22 @@ def _human_job(job: dict[str, Any]) -> str:
     fields = [job["job_id"], job.get("state", ""), job.get("backend", "")]
     if job.get("name"):
         fields.append(job["name"])
+    if job.get("queue"):
+        fields.append(f"queue={job['queue']}")
     if job.get("exit_code") is not None:
         fields.append(f"exit={job['exit_code']}")
     return "\t".join(str(field) for field in fields if field != "")
+
+
+def _human_queue(queue: dict[str, Any]) -> str:
+    return "\t".join(
+        (
+            str(queue["name"]),
+            f"concurrency={queue['concurrency']}",
+            f"queued={queue.get('queued_jobs', 0)}",
+            f"active={queue.get('active_jobs', 0)}",
+        )
+    )
 
 
 def _demo(
@@ -260,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
                 artifacts=args.artifact, log_dir=args.log_dir,
                 backend_options=_slurm_options(args.slurm_option),
                 client_request_id=args.client_request_id,
+                queue_name=args.queue,
             )
             output = {
                 key: result[key]
@@ -268,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
                     "state",
                     "backend",
                     "client_request_id",
+                    "queue",
                     "idempotent_replay",
                 )
                 if result.get(key) is not None
@@ -314,8 +340,23 @@ def main(argv: list[str] | None = None) -> int:
             _print(result, json_mode, quiet=args.quiet)
             return 0
         if args.action == "list":
-            _print(service.list(args.state, args.host), json_mode, quiet=args.quiet)
+            _print(
+                service.list(args.state, args.host, args.queue),
+                json_mode,
+                quiet=args.quiet,
+            )
             return 0
+        if args.action == "queue":
+            if args.queue_action == "create":
+                result = service.create_queue(args.name, args.concurrency)
+                if json_mode:
+                    _print(result, True, quiet=args.quiet)
+                elif not args.quiet:
+                    print(_human_queue(result))
+                return 0
+            if args.queue_action == "list":
+                _print(service.list_queues(), json_mode, quiet=args.quiet)
+                return 0
         if args.action == "inspect":
             _print(service.inspect(args.job_id), True if json_mode else True, quiet=args.quiet)
             return 0

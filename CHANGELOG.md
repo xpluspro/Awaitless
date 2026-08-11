@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add durable named FIFO queues for local and SSH jobs with fixed concurrency,
+  non-preemptive admission, queued-job cancellation, and runtime timeouts that
+  begin only after execution starts.
+- Coordinate local admission transactionally in SQLite and SSH admission on the
+  target host with daemonless queue wrappers and automatically released locks.
+- Add `awaitless queue create/list`, `submit --queue`, queue filtering, MCP queue
+  tools/arguments, and expose Slurm `PENDING` consistently as `queued`.
+
 ## 0.3.0 — 2026-08-10
 
 - Reposition Awaitless as durable MCP Tasks for infrastructure users already

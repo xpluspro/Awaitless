@@ -4,10 +4,11 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**别再让 Coding Agent 轮询长任务。**
+**别再让 Coding Agent 轮询长任务和稀缺资源。**
 
 Awaitless 把本地、SSH 和 Slurm 命令变成持久任务：提交一次、断开连接，之后再取回
-退出码、有限日志和 JSON 结果。工作负载始终运行在你自己的基础设施上。
+退出码、有限日志和 JSON 结果。命名队列还可以在本地或 SSH 容量可用前替 Agent 等待。
+工作负载始终运行在你自己的基础设施上。
 
 [English](README.md) · [完整文档](docs/README.md) ·
 [Benchmark](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
@@ -54,6 +55,21 @@ awaitless wait job_019F... --json
 
 中断 waiter、关闭 MCP 客户端或换一个全新的 Agent 会话都不会停止任务。只凭稳定
 job ID 就能恢复结果。
+
+## 资源还没空闲，也可以现在提交
+
+先创建一个持久 FIFO 队列，之后立即提交所有命令：
+
+```bash
+awaitless queue create gpu0 --concurrency 1
+
+awaitless submit --queue gpu0 -- python train_a.py
+awaitless submit --queue gpu0 -- python train_b.py
+awaitless submit --queue gpu0 -- python train_c.py
+```
+
+第一条命令运行，其余任务显示 `queued`；容量释放后，下一个任务会自动启动。第一版没有
+priority 和抢占，只有固定并发与 FIFO admission，也绝不会为了后来的任务杀掉正在运行的工作。
 
 ## 30 秒体验断线恢复
 
@@ -106,8 +122,8 @@ awaitless wait <job-id> --json
 
 | Backend | Awaitless 增加的能力 |
 |---|---|
-| **Local** | 持久进程组跟踪、取消、有限日志，以及客户端退出后的恢复。 |
-| **SSH** | 在已有主机上提供同一套任务契约；用 heartbeat 判断存活，不需要远端 daemon。 |
+| **Local** | 持久进程组跟踪、取消、有限日志和事务化命名队列。 |
+| **SSH** | 同一套任务契约，以及在目标主机协调的队列；不需要远端 daemon。 |
 | **Slurm** | 真正的 `sbatch` 调度，以及持久 Slurm ID、队列/记账状态、退出码、日志、取消和 Artifact。 |
 
 通过 `--backend`、`--host` 或配置默认值切换目标，不需要改变 Agent 提交与取回任务的方式。
@@ -122,7 +138,7 @@ awaitless wait <job-id> --json
 | **Awaitless** | Agent 发起的构建、测试、benchmark、远程任务与集群任务 | 只需提供命令，以及可选的 JSON Artifact。 |
 
 Awaitless 不替代交互终端，也不替代 Slurm。它为 Coding Agent 提供持久任务接口，
-需要资源调度时仍然使用 Slurm。
+在本地/SSH 机器上提供固定并发队列，并把集群资源调度交给 Slurm。
 
 ## 工作方式
 
@@ -130,7 +146,8 @@ Awaitless 不替代交互终端，也不替代 Slurm。它为 Coding Agent 提�
 flowchart LR
     A["Coding Agent"] -->|"提交一次"| B["Awaitless MCP / CLI"]
     B --> C[("SQLite 任务记录")]
-    B --> D{"Backend"}
+    B --> Q{"命名队列？"}
+    Q -->|"容量可用"| D{"Backend"}
     D --> L["本地进程"]
     D --> S["SSH 主机"]
     D --> H["Slurm allocation"]

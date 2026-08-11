@@ -9,6 +9,7 @@ distribution.
 Awaitless requires Linux, Python 3.10 or newer, and Bash. SSH and Slurm targets
 also require local OpenSSH commands (`ssh` and `sftp`). A Slurm backend host must
 provide `sbatch`, `squeue`, `sacct`, and `scancel`.
+Named queues on an SSH target additionally require `flock` from util-linux.
 
 The distribution installs three commands:
 
@@ -92,7 +93,9 @@ Commands:
 | `status` | Reconcile and return the current state. |
 | `logs` | Return bounded stdout and stderr tails. |
 | `cancel` | Persist cancellation intent and stop the managed process group or scheduler job. |
-| `list` | List recent jobs, optionally by state or host. |
+| `list` | List recent jobs, optionally by state, host, or queue. |
+| `queue create` | Create an immutable named FIFO queue and concurrency limit. |
+| `queue list` | List queues and their queued, active, and total job counts. |
 | `inspect` | Return job metadata and state history. |
 | `doctor` | Check local and configured SSH prerequisites. |
 | `demo` | Exercise submit, waiter interruption, reconnect, and JSON Artifact recovery locally. |
@@ -106,6 +109,8 @@ awaitless status <job-id> --json
 awaitless logs <job-id> --tail 200 --json
 awaitless cancel <job-id> --grace-period 5s --json
 awaitless list --state running --json
+awaitless queue create gpu0 --concurrency 1 --json
+awaitless queue list --json
 awaitless inspect <job-id> --json
 ```
 
@@ -122,6 +127,7 @@ Important `submit` options:
 --artifact PATH
 --slurm-option NAME=VALUE
 --name NAME
+--queue NAME
 --client-request-id ID
 ```
 
@@ -146,6 +152,52 @@ or MCP response from launching a second GPU or Slurm job.
 `wait --timeout` limits only how long that client waits. `submit --timeout`
 limits the managed job runtime.
 
+## Named concurrency queues
+
+Queues let an Agent submit intent before a local or SSH resource is free:
+
+```bash
+awaitless queue create gpu0 --concurrency 1
+awaitless submit --queue gpu0 -- python train_a.py
+awaitless submit --queue gpu0 -- python train_b.py
+awaitless submit --queue gpu0 -- python train_c.py
+```
+
+Queue creation is idempotent when the name and concurrency match. Reusing a name
+with a different concurrency is rejected. Names contain at most 64 letters,
+digits, dots, underscores, or hyphens.
+
+The admission policy is deliberately small:
+
+- FIFO order with a fixed positive concurrency limit;
+- no priorities, preemption, reordering, DAGs, or automatic GPU discovery;
+- runtime timeouts begin only after the command actually starts;
+- cancelling a queued job prevents its command from starting;
+- queue selection participates in the `client_request_id` fingerprint.
+
+A queue definition is a policy applied independently to each execution target.
+Local jobs coordinate transactionally through the shared Awaitless SQLite data
+directory. SSH jobs coordinate through locks and durable queue files on the
+target host, so separate clients using the same remote queue directory cannot
+both claim the same capacity. The default remote location is
+`~/.awaitless/queues`; override it per host with `remote_queue_dir`.
+Independent clients with different `AWAITLESS_DATA_DIR` values each define the
+same queue locally; the first SSH submission fixes its remote concurrency and a
+mismatch is rejected. `queue list` counts only jobs known to the current local
+data store, while admission on the target still includes every remote client.
+
+Detached local and SSH wrappers wait for admission and start the next job, so no
+Awaitless daemon or waiting Agent is required. SSH slot locks are released by
+the operating system if a wrapper exits, and later wrappers discard stale FIFO
+entries. If a local waiting wrapper disappears, the next `status`, `wait`,
+`list`, or submission reconciles stale capacity and relaunches it; transactional
+claiming prevents duplicate command starts. A host reboot still requires a new
+Awaitless invocation because there is intentionally no boot-time daemon.
+
+Full resource scheduling remains Slurm's responsibility, so combining
+`--queue` with `--backend slurm` is rejected; Slurm `PENDING` is exposed as the
+same Awaitless `queued` lifecycle state.
+
 ## SSH backend
 
 Declare a named host:
@@ -157,6 +209,7 @@ port = 22
 user = "developer"
 identity_file = "~/.ssh/id_ed25519"
 remote_job_dir = "~/.awaitless/jobs"
+remote_queue_dir = "~/.awaitless/queues"
 gssapi_authentication = false
 connect_timeout = 8
 operation_timeout = 20
@@ -229,7 +282,7 @@ Slurm state mapping:
 
 | Slurm | Awaitless |
 |---|---|
-| `PENDING` | `pending` |
+| `PENDING` | `queued` |
 | active scheduler states | `running` |
 | `COMPLETED` | `succeeded` |
 | `CANCELLED` | `cancelled` |
@@ -252,6 +305,9 @@ real Slurm 25.11.2 cluster:
 | Bounded stdout | `compute_host=node099 slurm_job_id=60597793` (43 bytes) |
 | JSON Artifact | Parsed `{ "ok": true, "compute_host": "node099", "slurm_job_id": "60597793" }` |
 
+The evidence table preserves the v0.2 response text; current releases call the
+same Slurm admission state `queued` rather than `pending`.
+
 The reproducible driver is [`scripts/mcp_slurm_demo.py`](../scripts/mcp_slurm_demo.py)
 and the raw structured evidence is [`assets/mcp-slurm-demo.json`](../assets/mcp-slurm-demo.json).
 
@@ -261,7 +317,7 @@ The stable Awaitless job ID is the recovery handle. A new process may call
 `wait`, `status`, `logs`, `cancel`, or `inspect` without inheriting the process
 handle or terminal session that submitted the job.
 
-States are `starting`, `pending`, `running`, `stalled`, `succeeded`, `failed`,
+States are `queued`, `starting`, `running`, `stalled`, `succeeded`, `failed`,
 `cancelled`, `timed_out`, and `lost`. A stall timeout reports `stalled`; it does
 not cancel the job automatically.
 
@@ -315,7 +371,8 @@ isolated `/path/to/logs/<job-id>/` directory for each job.
 ## MCP tools and protocol
 
 Awaitless exposes `run_job`, `submit_job`, `wait_for_job`, `get_job_status`,
-`get_job_logs`, `cancel_job`, and `list_jobs` over stdio. Tasks-aware clients
+`get_job_logs`, `cancel_job`, `list_jobs`, `create_queue`, and `list_queues` over
+stdio. `run_job` and `submit_job` accept an optional `queue`. Tasks-aware clients
 can receive a durable Task handle and use `tasks/get`, `tasks/cancel`, and
 `tasks/update`.
 

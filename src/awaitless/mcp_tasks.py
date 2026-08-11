@@ -59,6 +59,7 @@ class RunJobArguments(BaseModel):
     name: str | None = None
     artifacts: list[str] | None = None
     slurm_options: dict[str, str | int | float] | None = None
+    queue: str | None = None
 
 
 class CreateTaskResult(Result):

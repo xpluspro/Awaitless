@@ -95,6 +95,7 @@ Awaitless 必须实现：
 8. 通过 CLI 提供稳定接口。
 9. 提供适合 AI Agent 使用的结构化 JSON 输出。
 10. 提供 Codex Skill 或 MCP 集成，引导 Agent 正确使用工具。
+11. 允许 Agent 在资源尚未空闲时一次性提交意图，由命名 FIFO 队列自动准入执行。
 
 ### 3.2 非目标
 
@@ -252,7 +253,7 @@ v0.1 支持：
 统一状态模型：
 
 ```text
-pending
+queued
 starting
 running
 succeeded
@@ -265,7 +266,7 @@ lost
 
 状态说明：
 
-* `pending`：任务已创建，尚未开始。
+* `queued`：任务已创建，正在等待 Slurm 或 Awaitless 命名队列准入。
 * `starting`：正在准备执行环境。
 * `running`：任务正在运行。
 * `succeeded`：任务退出码为 0。
@@ -1047,6 +1048,16 @@ awaitless cancel <job-id>
 * systemd backend；
 * 运行时间历史统计；
 * stall detection。
+
+### Milestone 5：资源等待
+
+实现：
+
+* local / SSH 命名队列；
+* FIFO + 固定最大并发；
+* 排队任务取消与 runtime timeout 分离；
+* 无常驻 daemon 的自动续跑；
+* Slurm `PENDING` 到统一 `queued` 状态的映射。
 
 ---
 

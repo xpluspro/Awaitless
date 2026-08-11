@@ -28,6 +28,17 @@ class LocalBackend:
             close_fds=True,
         )
         try:
+            if job.get("queue_name"):
+                current, registered = self.store.register_queue_runner(
+                    job["job_id"],
+                    expected_pid=job.get("runner_pid"),
+                    expected_start_ticks=job.get("runner_start_ticks"),
+                    runner_pid=runner.pid,
+                    runner_start_ticks=process_start_ticks(runner.pid),
+                )
+                if not registered:
+                    runner.terminate()
+                return current
             self.store.update(
                 job["job_id"],
                 runner_pid=runner.pid,
@@ -77,6 +88,19 @@ class LocalBackend:
             return job
         if process_matches(job.get("runner_pid"), job.get("runner_start_ticks")):
             return job
+        if job.get("queue_name") and job["state"] in {"queued", "starting"}:
+            spec_path = Path(job["job_dir"]) / "run-spec.json"
+            if spec_path.is_file():
+                if job["state"] == "starting" and not job.get("pid"):
+                    job, recovered = self.store.requeue_unstarted_runner(
+                        job["job_id"],
+                        expected_pid=job.get("runner_pid"),
+                        expected_start_ticks=job.get("runner_start_ticks"),
+                    )
+                    if not recovered:
+                        return job
+                if job["state"] == "queued":
+                    return self.submit(job, spec_path)
         # Give the runner a short window to atomically commit its final state.
         if job.get("started_at") and (time.time() - Path(job["job_dir"]).stat().st_mtime) < 1:
             return job
@@ -92,6 +116,11 @@ class LocalBackend:
         )
         if job["state"] != "cancelled":
             return job
+        if job.get("queue_name") and not job.get("pid"):
+            try:
+                (Path(job["job_dir"]) / "run-spec.json").unlink()
+            except OSError:
+                pass
         if job.get("pgid") and process_matches(job.get("pid"), job.get("pid_start_ticks")):
             terminate_group(int(job["pgid"]), grace_seconds)
         return job

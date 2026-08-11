@@ -57,6 +57,7 @@ def _submit_with_service(
     artifacts: list[str] | None,
     slurm_options: dict[str, str | int | float] | None,
     client_request_id: str | None,
+    queue: str | None,
     as_mcp_task: bool,
 ) -> dict[str, Any]:
     selected, selected_host = _selected_target(service, backend, host)
@@ -79,6 +80,7 @@ def _submit_with_service(
         backend_options=slurm_options or {},
         client_request_id=client_request_id,
         mcp_task_ttl_ms=task_ttl_ms,
+        queue_name=queue,
     )
 
 
@@ -94,11 +96,12 @@ def _submit_task(arguments: RunJobArguments) -> dict[str, Any]:
 server = MCPServer(
     name="awaitless",
     title="Awaitless",
-    description="Durable MCP Tasks on infrastructure you already own — local, SSH, and Slurm",
+    description="Durable queued MCP Tasks on infrastructure you already own — local, SSH, and Slurm",
     instructions=(
         "For MCP Tasks clients, call run_job with a stable client_request_id and retain "
         "the returned taskId. Other clients can use submit_job plus wait_for_job. "
-        "A client disconnect never cancels the submitted job."
+        "A client disconnect never cancels the submitted job. Use a preconfigured "
+        "named queue when work must wait for scarce local or SSH capacity."
     ),
     version=__version__,
     extensions=[AwaitlessTasksExtension(_service, _submit_task)],
@@ -118,12 +121,14 @@ def submit_job(
     artifacts: list[str] | None = None,
     slurm_options: dict[str, str | int | float] | None = None,
     client_request_id: str | None = None,
+    queue: str | None = None,
 ) -> dict[str, Any]:
     """Submit a durable job and return its stable ID without waiting.
 
     Omitted backend and host values use the Awaitless configuration defaults.
     Reuse client_request_id only when retrying the same logical submission; an
     identical retry returns the original job and a conflicting retry is rejected.
+    A named queue provides FIFO, non-preemptive admission for local or SSH work.
     Slurm options may contain account, constraint, cpus_per_task, gres, mem,
     nodes, ntasks, partition, qos, or time. Cluster config supplies defaults.
     """
@@ -141,6 +146,7 @@ def submit_job(
             artifacts=artifacts,
             slurm_options=slurm_options,
             client_request_id=client_request_id,
+            queue=queue,
             as_mcp_task=False,
         )
 
@@ -158,6 +164,7 @@ def run_job(
     name: str | None = None,
     artifacts: list[str] | None = None,
     slurm_options: dict[str, str | int | float] | None = None,
+    queue: str | None = None,
 ) -> dict[str, Any]:
     """Run one durable job.
 
@@ -179,6 +186,7 @@ def run_job(
             artifacts=artifacts,
             slurm_options=slurm_options,
             client_request_id=client_request_id,
+            queue=queue,
             as_mcp_task=True,
         )
         result, _ = service.wait(submitted["job_id"])
@@ -229,14 +237,32 @@ def cancel_job(job_id: str, grace_seconds: float = 5.0) -> dict[str, Any]:
 
 @server.tool()
 def list_jobs(
-    state: str | None = None, host: str | None = None, limit: int = 50
+    state: str | None = None,
+    host: str | None = None,
+    queue: str | None = None,
+    limit: int = 50,
 ) -> dict[str, Any]:
     """List recent durable jobs, optionally filtered by state or host."""
     if limit <= 0 or limit > 500:
         raise AwaitlessError("limit must be between 1 and 500")
     with _service() as service:
-        jobs = service.list(state=state, host=host, limit=limit)
+        jobs = service.list(state=state, host=host, queue_name=queue, limit=limit)
         return {"jobs": jobs, "count": len(jobs)}
+
+
+@server.tool()
+def create_queue(name: str, concurrency: int) -> dict[str, Any]:
+    """Create an immutable named FIFO queue with a fixed concurrency limit."""
+    with _service() as service:
+        return service.create_queue(name, concurrency)
+
+
+@server.tool()
+def list_queues() -> dict[str, Any]:
+    """List named queues and their current queued/active job counts."""
+    with _service() as service:
+        queues = service.list_queues()
+        return {"queues": queues, "count": len(queues)}
 
 
 def main(argv: list[str] | None = None) -> int:

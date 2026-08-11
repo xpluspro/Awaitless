@@ -78,6 +78,7 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     {tool.name for tool in tools.tools},
                     {
+                        "create_queue",
                         "submit_job",
                         "run_job",
                         "wait_for_job",
@@ -85,8 +86,14 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                         "get_job_logs",
                         "cancel_job",
                         "list_jobs",
+                        "list_queues",
                     },
                 )
+                created_queue = await session.call_tool(
+                    "create_queue", {"name": "mcp-gpu", "concurrency": 1}
+                )
+                self.assertFalse(created_queue.is_error, created_queue.content)
+                self.assertTrue(created_queue.structured_content["created"])
                 source = (
                     "from pathlib import Path; import time; "
                     "time.sleep(0.2); "
@@ -100,6 +107,7 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                         "command": [sys.executable, "-c", source],
                         "cwd": str(self.work),
                         "artifacts": ["result.json"],
+                        "queue": "mcp-gpu",
                     },
                 )
                 self.assertFalse(submitted.is_error, submitted.content)
@@ -123,6 +131,9 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
         listed = await self.call("list_jobs", {"limit": 10})
         self.assertEqual(listed["jobs"][0]["job_id"], job_id)
         self.assertEqual(listed["count"], 1)
+        queues = await self.call("list_queues", {})
+        self.assertEqual(queues["queues"][0]["name"], "mcp-gpu")
+        self.assertEqual(queues["queues"][0]["total_jobs"], 1)
 
         cancellable = await self.call(
             "submit_job",

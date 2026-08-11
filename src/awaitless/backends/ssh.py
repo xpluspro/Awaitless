@@ -67,6 +67,109 @@ class SSHBackend:
         assert job["host"]
         _, _, root = ssh_target_and_options(self.settings, job["host"])
         remote_expr = _remote_path_expression(root, job["job_id"])
+        queue = spec.get("queue")
+        queue_setup = ""
+        queue_admission = ""
+        registration_cleanup = ""
+        registration_complete = ""
+        ready_started_check = '[ -s "$job_dir/started_at" ] && '
+        if queue:
+            queue_root = str(
+                self.settings.hosts.get(job["host"], {}).get(
+                    "remote_queue_dir", "~/.awaitless/queues"
+                )
+            )
+            queue_expr = _remote_path_expression(queue_root, queue["name"])
+            concurrency = int(queue["concurrency"])
+            queue_setup = f"""
+queue_dir={queue_expr}
+command -v flock >/dev/null 2>&1 || {{ echo 'remote queues require flock' >&2; exit 1; }}
+mkdir -p "$queue_dir/pending" "$queue_dir/slots"
+chmod 700 "$queue_dir" "$queue_dir/pending" "$queue_dir/slots"
+exec 9>"$queue_dir/dispatch.lock"
+flock -x 9
+if [ -s "$queue_dir/concurrency" ]; then
+  configured=$(cat "$queue_dir/concurrency")
+  [ "$configured" = "{concurrency}" ] || {{ echo "queue {queue['name']} already has concurrency $configured on this host" >&2; exit 1; }}
+else
+  printf '%s\n' {concurrency} > "$queue_dir/concurrency"
+fi
+counter=0
+[ -s "$queue_dir/counter" ] && counter=$(cat "$queue_dir/counter")
+case "$counter" in ''|*[!0-9]*) echo 'invalid remote queue counter' >&2; exit 1 ;; esac
+counter=$((counter + 1))
+printf '%s\n' "$counter" > "$queue_dir/counter"
+ticket=$(printf '%020d' "$counter")
+pending_name="$ticket-{job['job_id']}"
+pending_file="$queue_dir/pending/$pending_name"
+printf '%s\n' "$job_dir" > "$pending_file"
+printf '%s\n' "$pending_name" > "$job_dir/queue_pending"
+registered=1
+"""
+            queue_admission = f"""
+queue_dir={queue_expr}
+pending_name=$(cat "$job_dir/queue_pending")
+pending_file="$queue_dir/pending/$pending_name"
+slot_fd=
+while [ -z "$slot_fd" ]; do
+  [ -f "$job_dir/cancelled_at" ] && exit 0
+  exec 9>"$queue_dir/dispatch.lock"
+  flock -x 9
+  while true; do
+    first=$(LC_ALL=C find "$queue_dir/pending" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | head -1)
+    [ -n "$first" ] || break
+    candidate_file="$queue_dir/pending/$first"
+    candidate_dir=$(cat "$candidate_file" 2>/dev/null || true)
+    candidate_pid=$(cat "$candidate_dir/pid" 2>/dev/null || true)
+    candidate_ticks=$(cat "$candidate_dir/pid_start_ticks" 2>/dev/null || true)
+    alive=0
+    case "$candidate_pid" in
+      ''|*[!0-9]*) ;;
+      *)
+        case "$candidate_ticks" in
+          ''|*[!0-9]*) ;;
+          *)
+            current_ticks=$(awk '{{print $22}}' "/proc/$candidate_pid/stat" 2>/dev/null || true)
+            current_state=$(awk '{{print $3}}' "/proc/$candidate_pid/stat" 2>/dev/null || true)
+            [ "$current_ticks" = "$candidate_ticks" ] && [ "$current_state" != "Z" ] && alive=1
+            ;;
+        esac
+        ;;
+    esac
+    if [ "$alive" -eq 1 ]; then break; fi
+    rm -f "$candidate_file"
+  done
+  if [ "$first" = "$pending_name" ]; then
+    slot=0
+    concurrency=$(cat "$queue_dir/concurrency")
+    while [ "$slot" -lt "$concurrency" ]; do
+      slot_path="$queue_dir/slots/$slot"
+      : > "$slot_path"
+      exec {{candidate_fd}}>"$slot_path"
+      if flock -n "$candidate_fd"; then
+        slot_fd=$candidate_fd
+        rm -f "$pending_file"
+        : > "$job_dir/admitted"
+        break
+      fi
+      eval "exec ${{candidate_fd}}>&-"
+      slot=$((slot + 1))
+    done
+  fi
+  flock -u 9
+  exec 9>&-
+  [ -n "$slot_fd" ] || sleep 0.2
+done
+"""
+            registration_cleanup = """
+registered=0
+cleanup_registration() {
+  [ "$registered" -eq 0 ] || rm -f "$pending_file"
+}
+trap cleanup_registration EXIT
+"""
+            registration_complete = "registered=0"
+            ready_started_check = ""
         command = shlex.join(spec["command"])
         cwd_line = f"cd -- {shlex.quote(spec['cwd'])}" if spec.get("cwd") else ":"
         exports = "\n".join(
@@ -80,10 +183,20 @@ set +e
 umask 077
 job_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 tmp="$job_dir/.tmp.$$"
-date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.started_at" && mv "$tmp.started_at" "$job_dir/started_at"
 echo $$ > "$tmp.pid" && mv "$tmp.pid" "$job_dir/pid"
 awk '{{print $22}}' "/proc/$$/stat" > "$tmp.pid_start_ticks" && mv "$tmp.pid_start_ticks" "$job_dir/pid_start_ticks"
 ps -o pgid= -p $$ | tr -d ' ' > "$tmp.pgid" && mv "$tmp.pgid" "$job_dir/pgid"
+pending_file=
+heartbeat_pid=
+cleanup() {{
+  [ -z "$pending_file" ] || rm -f "$pending_file"
+  if [ -n "$heartbeat_pid" ]; then
+    kill "$heartbeat_pid" 2>/dev/null || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+  fi
+}}
+trap cleanup EXIT
+trap 'exit 143' HUP INT TERM
 wrapper_pid=$$
 (
   while kill -0 "$wrapper_pid" 2>/dev/null; do
@@ -92,11 +205,18 @@ wrapper_pid=$$
   done
 ) &
 heartbeat_pid=$!
+{queue_admission}
+date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.started_at" && mv "$tmp.started_at" "$job_dir/started_at"
 {cwd_line}
 cd_rc=$?
 {exports}
 if [ "$cd_rc" -eq 0 ]; then
-  {command} >"$job_dir/stdout.log" 2>"$job_dir/stderr.log"
+  (
+    # Keep the slot lock in this wrapper, but never leak its descriptor into
+    # user processes (including children that intentionally daemonize).
+    [ -z "$slot_fd" ] || eval "exec ${{slot_fd}}>&-"
+    {command}
+  ) >"$job_dir/stdout.log" 2>"$job_dir/stderr.log"
   rc=$?
 else
   echo "working directory does not exist: {shlex.quote(spec.get('cwd') or '')}" >"$job_dir/stderr.log"
@@ -104,13 +224,15 @@ else
 fi
 kill "$heartbeat_pid" 2>/dev/null || true
 wait "$heartbeat_pid" 2>/dev/null || true
+heartbeat_pid=
 echo "$rc" > "$tmp.exit_code" && mv "$tmp.exit_code" "$job_dir/exit_code"
 date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.finished_at" && mv "$tmp.finished_at" "$job_dir/finished_at"
 : > "$job_dir/command.sh"
 """
         encoded = base64.b64encode(wrapper.encode()).decode()
         metadata = base64.b64encode(json.dumps({
-            "job_id": job["job_id"], "command": spec["command"], "cwd": spec.get("cwd")
+            "job_id": job["job_id"], "command": spec["command"],
+            "cwd": spec.get("cwd"), "queue": queue["name"] if queue else None,
         }).encode()).decode()
         script = f"""set -eu
 job_dir={remote_expr}
@@ -122,13 +244,17 @@ printf %s {shlex.quote(metadata)} | base64 -d > "$job_dir/metadata.json"
 chmod 700 "$job_dir/command.sh"
 : > "$job_dir/stdout.log"
 : > "$job_dir/stderr.log"
-setsid nohup bash "$job_dir/command.sh" </dev/null >/dev/null 2>&1 &
+{registration_cleanup}
+{queue_setup}
+setsid nohup bash "$job_dir/command.sh" </dev/null >/dev/null 2>&1 9>&- &
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && [ -s "$job_dir/started_at" ] && [ -f "$job_dir/heartbeat" ]; then
+  if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && {ready_started_check}[ -f "$job_dir/heartbeat" ]; then
     echo "PID=$(cat "$job_dir/pid")"
     echo "PID_START_TICKS=$(cat "$job_dir/pid_start_ticks")"
     echo "PGID=$(cat "$job_dir/pgid")"
-    echo "STARTED=$(cat "$job_dir/started_at")"
+    [ ! -s "$job_dir/started_at" ] || echo "STARTED=$(cat "$job_dir/started_at")"
+    [ -s "$job_dir/started_at" ] || echo "QUEUED=1"
+    {registration_complete}
     exit 0
   fi
   sleep 0.1
@@ -138,13 +264,14 @@ exit 1
 """
         output = self._invoke(job["host"], script, timeout=5)
         values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-        if not values.get("STARTED"):
+        if not queue and not values.get("STARTED"):
             raise SSHError("remote wrapper returned no start timestamp")
         updates: dict[str, Any] = {
             "backend_id": root.rstrip("/") + "/" + job["job_id"],
-            "state": "running",
-            "started_at": values["STARTED"],
+            "state": "queued" if queue and not values.get("STARTED") else "running",
         }
+        if values.get("STARTED"):
+            updates["started_at"] = values["STARTED"]
         for source, target in (
             ("PID", "pid"),
             ("PID_START_TICKS", "pid_start_ticks"),

@@ -70,7 +70,7 @@ A Tasks-aware client immediately receives a server-directed Task result:
   "resultType": "task",
   "taskId": "job_019F...",
   "status": "working",
-  "statusMessage": "Awaitless job is pending",
+  "statusMessage": "Awaitless job is queued",
   "createdAt": "2026-08-10T12:00:00+00:00",
   "lastUpdatedAt": "2026-08-10T12:00:00+00:00",
   "ttlMs": 604800000,
@@ -138,7 +138,7 @@ unknown or already-satisfied input keys. Awaitless command jobs never enter
 
 | Awaitless state | MCP Task status | Notes |
 |---|---|---|
-| `pending`, `starting`, `running` | `working` | Continue with `tasks/get` after `pollIntervalMs`. |
+| `queued`, `starting`, `running`, `stalled` | `working` | Continue with `tasks/get` after `pollIntervalMs`. |
 | `cancelled` | `cancelled` | Cancellation is durable. |
 | `succeeded` | `completed` | Result includes exit code `0`. |
 | `failed`, `timed_out`, `lost` | `completed` | Command outcome remains in structured content. |

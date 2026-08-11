@@ -159,6 +159,61 @@ class StoreConcurrencyTest(unittest.TestCase):
                 )
             check.close()
 
+    def test_queue_runner_registration_and_claim_use_compare_and_swap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = Store(root / "awaitless.db")
+            store.create_queue("gpu0", 1)
+            values = self.submission_values(root, "job_queue")
+            values.update(state="queued", queue_name="gpu0")
+            store.create(values)
+
+            registered, won = store.register_queue_runner(
+                "job_queue",
+                expected_pid=None,
+                expected_start_ticks=None,
+                runner_pid=101,
+                runner_start_ticks=1001,
+            )
+            self.assertTrue(won)
+            self.assertEqual(registered["runner_pid"], 101)
+            current, lost = store.register_queue_runner(
+                "job_queue",
+                expected_pid=None,
+                expected_start_ticks=None,
+                runner_pid=202,
+                runner_start_ticks=2002,
+            )
+            self.assertFalse(lost)
+            self.assertEqual(current["runner_pid"], 101)
+
+            current, wrong_owner = store.claim_queue_slot(
+                "job_queue", runner_pid=202
+            )
+            self.assertFalse(wrong_owner)
+            self.assertEqual(current["state"], "queued")
+            current, claimed = store.claim_queue_slot(
+                "job_queue", runner_pid=101
+            )
+            self.assertTrue(claimed)
+            self.assertEqual(current["state"], "starting")
+
+            current, wrong_recovery = store.requeue_unstarted_runner(
+                "job_queue", expected_pid=202, expected_start_ticks=2002
+            )
+            self.assertFalse(wrong_recovery)
+            self.assertEqual(current["state"], "starting")
+            current, recovered = store.requeue_unstarted_runner(
+                "job_queue", expected_pid=101, expected_start_ticks=1001
+            )
+            self.assertTrue(recovered)
+            self.assertEqual(current["state"], "queued")
+            self.assertEqual(
+                [event["state"] for event in store.events("job_queue")],
+                ["queued", "starting", "queued"],
+            )
+            store.close()
+
 
 if __name__ == "__main__":
     unittest.main()

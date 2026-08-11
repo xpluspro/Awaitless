@@ -1,5 +1,7 @@
 TERMINAL_STATES = {"succeeded", "failed", "cancelled", "timed_out", "lost"}
-ACTIVE_STATES = {"pending", "starting", "running", "stalled"}
+# ``pending`` remains active for rows written by Awaitless <= 0.3. New work uses
+# ``queued`` for both named concurrency queues and Slurm scheduler admission.
+ACTIVE_STATES = {"pending", "queued", "starting", "running", "stalled"}
 
 EXIT_CODES = {
     "succeeded": 0,

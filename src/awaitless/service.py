@@ -19,6 +19,7 @@ from .util import atomic_json, parse_time, utc_now
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 CLIENT_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
+QUEUE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SENSITIVE_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|API_KEY", re.I)
 
 
@@ -60,6 +61,7 @@ class Service:
         backend_options: dict[str, Any] | None = None,
         client_request_id: str | None = None,
         mcp_task_ttl_ms: int | None = None,
+        queue_name: str | None = None,
     ) -> dict[str, Any]:
         if not command:
             raise AwaitlessError("a command is required after --")
@@ -69,6 +71,26 @@ class Service:
             raise AwaitlessError(f"{backend.upper()} backend requires --host")
         if backend == "local" and host:
             raise AwaitlessError("--host can only be used with an SSH-based backend")
+        queue: dict[str, Any] | None = None
+        if queue_name is not None:
+            if not QUEUE_NAME.fullmatch(queue_name):
+                raise AwaitlessError(
+                    "queue name must be 1-64 characters using letters, digits, "
+                    "dot, underscore, or hyphen"
+                )
+            if backend == "slurm":
+                raise AwaitlessError(
+                    "--queue is not supported for Slurm; submit directly and let "
+                    "Slurm schedule the requested resources"
+                )
+            queue = self.store.get_queue(queue_name)
+            if not queue:
+                raise AwaitlessError(
+                    f"unknown queue {queue_name!r}; create it with "
+                    f"awaitless queue create {queue_name} --concurrency N"
+                )
+            if backend == "local":
+                self._reconcile_local_queue(queue_name)
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise AwaitlessError("--timeout must be positive")
         if stall_timeout_seconds is not None and stall_timeout_seconds <= 0:
@@ -119,6 +141,7 @@ class Service:
             "env": redacted_env,
             "artifacts": artifacts,
             "backend_options": backend_options or {},
+            "queue": queue_name,
             "created_at": utc_now(),
         }
         spec = {
@@ -129,6 +152,11 @@ class Service:
             "backend_options": backend_options or {},
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
+            "queue": (
+                {"name": queue_name, "concurrency": queue["concurrency"]}
+                if queue_name and queue
+                else None
+            ),
         }
         values = {
             "job_id": job_id,
@@ -138,7 +166,7 @@ class Service:
             "command_json": json.dumps(command),
             "cwd": resolved_cwd,
             "env_json": json.dumps(redacted_env),
-            "state": "starting",
+            "state": "queued" if queue_name else "starting",
             "timeout_seconds": timeout_seconds,
             "stall_timeout_seconds": stall_timeout_seconds,
             "job_dir": str(job_dir),
@@ -146,6 +174,7 @@ class Service:
             "stderr_path": str(stderr_path),
             "artifacts_json": json.dumps(artifacts),
             "mcp_task_ttl_ms": mcp_task_ttl_ms,
+            "queue_name": queue_name,
         }
         if client_request_id is not None:
             fingerprint = _submission_fingerprint(
@@ -160,6 +189,7 @@ class Service:
                 artifacts=artifacts,
                 log_dir=str(log_root) if log_root else None,
                 backend_options=backend_options or {},
+                queue_name=queue_name,
                 mcp_task=mcp_task_ttl_ms is not None,
             )
             try:
@@ -204,7 +234,12 @@ class Service:
         result["idempotent_replay"] = False
         # The submit contract reports a successfully launched command as running even when a
         # very short command reaches its terminal state before the client receives the reply.
-        if result["state"] in TERMINAL_STATES and job.get("started_at") and job.get("pid"):
+        if (
+            not queue_name
+            and result["state"] in TERMINAL_STATES
+            and job.get("started_at")
+            and job.get("pid")
+        ):
             result["state"] = "running"
             result["exit_code"] = None
             result["finished_at"] = None
@@ -218,6 +253,8 @@ class Service:
 
     def status(self, job_id: str) -> dict[str, Any]:
         job = self.require(job_id)
+        if job["backend"] == "local" and job.get("queue_name"):
+            self._reconcile_local_queue(job["queue_name"], exclude=job_id)
         job = self.backends[job["backend"]].refresh(job)  # type: ignore[attr-defined]
         return self.summary(self._apply_stall(job))
 
@@ -259,10 +296,13 @@ class Service:
         self,
         state: str | None = None,
         host: str | None = None,
+        queue_name: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         results = []
-        for job in self.store.list(state=state, host=host, limit=limit):
+        for job in self.store.list(
+            state=state, host=host, queue_name=queue_name, limit=limit
+        ):
             if job["state"] not in TERMINAL_STATES:
                 try:
                     job = self.backends[job["backend"]].refresh(job)  # type: ignore[attr-defined]
@@ -270,6 +310,52 @@ class Service:
                     pass
             results.append(self.summary(job))
         return results
+
+    def create_queue(self, name: str, concurrency: int) -> dict[str, Any]:
+        if not QUEUE_NAME.fullmatch(name):
+            raise AwaitlessError(
+                "queue name must be 1-64 characters using letters, digits, "
+                "dot, underscore, or hyphen"
+            )
+        if (
+            isinstance(concurrency, bool)
+            or not isinstance(concurrency, int)
+            or concurrency <= 0
+        ):
+            raise AwaitlessError("queue concurrency must be a positive integer")
+        try:
+            queue, created = self.store.create_queue(name, concurrency)
+        except ValueError as exc:
+            raise AwaitlessError(str(exc)) from exc
+        summary = next(
+            item for item in self.store.list_queues() if item["name"] == name
+        )
+        return {**summary, "created": created}
+
+    def list_queues(self) -> list[dict[str, Any]]:
+        # Local runners commit their own terminal state. SSH wrappers persist it
+        # remotely, so reconcile those rows before reporting queue utilization.
+        for job in self.store.list():
+            if not job.get("queue_name") or job["state"] in TERMINAL_STATES:
+                continue
+            try:
+                self.backends[job["backend"]].refresh(job)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return self.store.list_queues()
+
+    def _reconcile_local_queue(
+        self, queue_name: str, *, exclude: str | None = None
+    ) -> None:
+        """Release capacity held by local processes that disappeared."""
+        for state in ("starting", "running", "stalled"):
+            for job in self.store.list(state=state, queue_name=queue_name):
+                if job["job_id"] == exclude or job["backend"] != "local":
+                    continue
+                try:
+                    self.backends["local"].refresh(job)
+                except Exception:
+                    pass
 
     def logs(self, job_id: str, tail: int, max_bytes: int) -> dict[str, Any]:
         job = self.require(job_id)
@@ -295,6 +381,7 @@ class Service:
             "stdout_path": job["stdout_path"],
             "stderr_path": job["stderr_path"],
             "artifact_paths": job["artifact_paths"],
+            "queue_order": job.get("queue_order"),
             "events": self.store.events(job_id),
             "error": job["error"],
         }
@@ -341,9 +428,26 @@ class Service:
 
     @staticmethod
     def summary(job: dict[str, Any]) -> dict[str, Any]:
-        start = parse_time(job.get("started_at")) or parse_time(job.get("created_at"))
-        finish = parse_time(job.get("finished_at")) or datetime.now(timezone.utc)
-        elapsed = max(0.0, (finish - start).total_seconds()) if start else 0.0
+        created = parse_time(job.get("created_at"))
+        started = parse_time(job.get("started_at"))
+        finished = parse_time(job.get("finished_at"))
+        now = datetime.now(timezone.utc)
+        elapsed_start = started or created
+        elapsed_end = finished or now
+        elapsed = (
+            max(0.0, (elapsed_end - elapsed_start).total_seconds())
+            if elapsed_start
+            else 0.0
+        )
+        duration = (
+            max(0.0, (finished - started).total_seconds())
+            if started and finished
+            else None
+        )
+        queue_wait = None
+        if created and (job.get("queue_name") or job.get("backend") == "slurm"):
+            queue_wait_end = started or finished or now
+            queue_wait = max(0.0, (queue_wait_end - created).total_seconds())
         stdout = Path(job["stdout_path"])
         stderr = Path(job["stderr_path"])
         mtimes = [path.stat().st_mtime for path in (stdout, stderr) if path.exists() and path.stat().st_size]
@@ -355,7 +459,10 @@ class Service:
             "created_at": job["created_at"], "updated_at": job["updated_at"],
             "started_at": job["started_at"], "finished_at": job["finished_at"],
             "mcp_task_ttl_ms": job.get("mcp_task_ttl_ms"),
-            "elapsed_seconds": round(elapsed, 3), "duration_seconds": round(elapsed, 3) if job.get("finished_at") else None,
+            "queue": job.get("queue_name"),
+            "queue_wait_seconds": round(queue_wait, 3) if queue_wait is not None else None,
+            "elapsed_seconds": round(elapsed, 3),
+            "duration_seconds": round(duration, 3) if duration is not None else None,
             "exit_code": job["exit_code"],
             "last_output_at": local_last_output or job.get("last_output_at"),
             "stdout_bytes": stdout.stat().st_size if stdout.exists() and job["backend"] == "local" else job.get("stdout_bytes", 0),

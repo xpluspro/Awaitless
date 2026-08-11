@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "awaitless-runner"
 version = "0.3.0"
-description = "Durable MCP Tasks for local, SSH, and Slurm infrastructure"
+description = "Durable queued MCP Tasks for local, SSH, and Slurm infrastructure"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -15,7 +15,7 @@ dependencies = [
   "mcp>=2.0,<3",
   "tomli>=2.0.1; python_version < '3.11'",
 ]
-keywords = ["ai-agents", "cli", "durable-jobs", "mcp", "slurm", "ssh", "task-runner"]
+keywords = ["ai-agents", "cli", "durable-jobs", "job-queue", "mcp", "slurm", "ssh", "task-runner"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

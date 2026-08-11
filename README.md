@@ -6,10 +6,11 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**Stop polling long-running jobs from your coding agent.**
+**Stop polling long-running jobs and scarce resources from your coding agent.**
 
 Awaitless turns local, SSH, and Slurm commands into durable tasks: submit once,
-disconnect, and collect the exit code, bounded logs, and JSON results later.
+disconnect, and collect the exit code, bounded logs, and JSON results later. Named
+queues can also wait until local or SSH capacity is available before starting.
 Your workload stays on infrastructure you already own.
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) ·
@@ -59,6 +60,23 @@ awaitless wait job_019F... --json
 
 Interrupt the waiter, close the MCP client, or start a fresh agent session. The
 job keeps running; the stable ID is enough to recover its result.
+
+## Submit work before the resource is free
+
+Create a durable FIFO queue once, then submit every command immediately:
+
+```bash
+awaitless queue create gpu0 --concurrency 1
+
+awaitless submit --queue gpu0 -- python train_a.py
+awaitless submit --queue gpu0 -- python train_b.py
+awaitless submit --queue gpu0 -- python train_c.py
+```
+
+The first command runs and the others report `queued`. Each starts automatically
+when capacity becomes available. There is no priority or preemption: Awaitless
+uses fixed concurrency and FIFO admission, and never kills running work to make
+room for a later job.
 
 ## Try the recovery story in 30 seconds
 
@@ -114,8 +132,8 @@ awaitless wait <job-id> --json
 
 | Backend | What Awaitless adds |
 |---|---|
-| **Local** | Durable process-group tracking, cancellation, bounded logs, and recovery after the client exits. |
-| **SSH** | The same job contract on an existing host, with heartbeat-based liveness and no remote daemon. |
+| **Local** | Durable process-group tracking, cancellation, bounded logs, and transactional named queues. |
+| **SSH** | The same job contract plus queues coordinated on the target host, with no remote daemon. |
 | **Slurm** | Real `sbatch` scheduling plus durable Slurm IDs, queue/accounting state, exit codes, logs, cancellation, and Artifacts. |
 
 Use `--backend`, `--host`, or configuration defaults to switch targets without
@@ -131,7 +149,8 @@ changing how the agent submits and collects work.
 | **Awaitless** | Agent-run builds, tests, benchmarks, remote jobs, and cluster work | Only the command and, optionally, the JSON Artifact to return. |
 
 Awaitless does not replace interactive terminals or Slurm. It gives coding
-agents a durable task interface and uses Slurm when resources must be scheduled.
+agents durable fixed-concurrency queues on local/SSH machines and delegates
+cluster resource scheduling to Slurm.
 
 ## How it works
 
@@ -139,7 +158,8 @@ agents a durable task interface and uses Slurm when resources must be scheduled.
 flowchart LR
     A["Coding agent"] -->|"submit once"| B["Awaitless MCP / CLI"]
     B --> C[("SQLite job record")]
-    B --> D{"Backend"}
+    B --> Q{"Named queue?"}
+    Q -->|"capacity available"| D{"Backend"}
     D --> L["Local process"]
     D --> S["SSH host"]
     D --> H["Slurm allocation"]

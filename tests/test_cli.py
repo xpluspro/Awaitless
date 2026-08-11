@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+
+from awaitless.db import Store
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,10 +30,14 @@ class CLITest(unittest.TestCase):
         self.temp.cleanup()
 
     def run_cli(
-        self, *args: str, expected: int = 0, cwd: Path = ROOT
+        self,
+        *args: str,
+        expected: int = 0,
+        cwd: Path = ROOT,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
-            [sys.executable, "-m", "awaitless", *args], cwd=cwd, env=self.env,
+            [sys.executable, "-m", "awaitless", *args], cwd=cwd, env=env or self.env,
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15,
         )
         self.assertEqual(result.returncode, expected, result.stderr or result.stdout)
@@ -104,6 +111,274 @@ class CLITest(unittest.TestCase):
         time.sleep(0.1)
         status = json.loads(self.run_cli("status", job, "--json").stdout)
         self.assertEqual(status["state"], "cancelled")
+
+    def test_local_queue_is_fifo_durable_and_cancellable(self) -> None:
+        created = json.loads(
+            self.run_cli(
+                "queue", "create", "gpu0", "--concurrency", "1", "--json"
+            ).stdout
+        )
+        self.assertTrue(created["created"])
+        replay = json.loads(
+            self.run_cli(
+                "queue", "create", "gpu0", "--concurrency", "1", "--json"
+            ).stdout
+        )
+        self.assertFalse(replay["created"])
+
+        events = Path(self.temp.name) / "queue-events.txt"
+
+        def queued_job(label: str, delay: float) -> dict[str, object]:
+            source = (
+                "import time; "
+                f"p={str(events)!r}; "
+                f"open(p,'a').write('start-{label}\\n'); "
+                f"time.sleep({delay}); "
+                f"open(p,'a').write('end-{label}\\n')"
+            )
+            return json.loads(
+                self.run_cli(
+                    "submit",
+                    "--queue",
+                    "gpu0",
+                    "--json",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    source,
+                ).stdout
+            )
+
+        first = queued_job("a", 0.35)
+        second = queued_job("b", 0.05)
+        cancelled = queued_job("cancelled", 0.05)
+        self.assertIn(first["state"], {"queued", "starting", "running"})
+        self.assertEqual(second["state"], "queued")
+        self.assertEqual(cancelled["state"], "queued")
+        cancelled_result = json.loads(
+            self.run_cli("cancel", str(cancelled["job_id"]), "--json").stdout
+        )
+        self.assertEqual(cancelled_result["state"], "cancelled")
+
+        self.assertEqual(
+            json.loads(
+                self.run_cli("wait", str(first["job_id"]), "--json").stdout
+            )["state"],
+            "succeeded",
+        )
+        second_final = json.loads(
+            self.run_cli("wait", str(second["job_id"]), "--json").stdout
+        )
+        self.assertEqual(second_final["state"], "succeeded")
+        self.assertEqual(second_final["queue"], "gpu0")
+        self.assertEqual(
+            events.read_text(encoding="utf-8").splitlines(),
+            ["start-a", "end-a", "start-b", "end-b"],
+        )
+        inspected = json.loads(
+            self.run_cli("inspect", str(second["job_id"]), "--json").stdout
+        )
+        self.assertEqual(
+            [event["state"] for event in inspected["events"]],
+            ["queued", "starting", "running", "succeeded"],
+        )
+        queues = json.loads(self.run_cli("queue", "list", "--json").stdout)
+        self.assertEqual(queues[0]["name"], "gpu0")
+        self.assertEqual(queues[0]["concurrency"], 1)
+        self.assertEqual(queues[0]["queued_jobs"], 0)
+        self.assertEqual(queues[0]["active_jobs"], 0)
+        self.assertEqual(queues[0]["total_jobs"], 3)
+
+    def test_queue_validation_conflict_and_slurm_boundary(self) -> None:
+        self.run_cli("queue", "create", "gpu", "--concurrency", "2", "--json")
+        conflict = self.run_cli(
+            "queue",
+            "create",
+            "gpu",
+            "--concurrency",
+            "1",
+            "--json",
+            expected=2,
+        )
+        self.assertIn("already exists", conflict.stderr)
+        invalid = self.run_cli(
+            "queue",
+            "create",
+            "bad/name",
+            "--concurrency",
+            "1",
+            "--json",
+            expected=2,
+        )
+        self.assertIn("queue name", invalid.stderr)
+        slurm = self.run_cli(
+            "submit",
+            "--backend",
+            "slurm",
+            "--host",
+            "cluster",
+            "--queue",
+            "gpu",
+            "--json",
+            "--",
+            "true",
+            expected=2,
+        )
+        self.assertIn("let Slurm schedule", slurm.stderr)
+
+    def test_local_queue_honors_concurrency_greater_than_one(self) -> None:
+        self.run_cli(
+            "queue", "create", "workers", "--concurrency", "2", "--json"
+        )
+        state_path = Path(self.temp.name) / "concurrency-state.json"
+        lock_path = Path(self.temp.name) / "concurrency.lock"
+        jobs: list[str] = []
+        for _ in range(4):
+            source = f"""
+import fcntl, json, time
+state_path = {str(state_path)!r}
+lock_path = {str(lock_path)!r}
+with open(lock_path, 'a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        state = json.load(open(state_path))
+    except FileNotFoundError:
+        state = {{'active': 0, 'maximum': 0}}
+    state['active'] += 1
+    state['maximum'] = max(state['maximum'], state['active'])
+    open(state_path, 'w').write(json.dumps(state))
+    fcntl.flock(lock, fcntl.LOCK_UN)
+time.sleep(0.2)
+with open(lock_path, 'a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    state = json.load(open(state_path))
+    state['active'] -= 1
+    open(state_path, 'w').write(json.dumps(state))
+"""
+            submitted = json.loads(
+                self.run_cli(
+                    "submit",
+                    "--queue",
+                    "workers",
+                    "--json",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    source,
+                ).stdout
+            )
+            jobs.append(submitted["job_id"])
+        for job_id in jobs:
+            result = json.loads(self.run_cli("wait", job_id, "--json").stdout)
+            self.assertEqual(result["state"], "succeeded")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state, {"active": 0, "maximum": 2})
+
+    def test_queue_delay_does_not_consume_runtime_timeout(self) -> None:
+        self.run_cli(
+            "queue", "create", "serial", "--concurrency", "1", "--json"
+        )
+        blocker = json.loads(
+            self.run_cli(
+                "submit",
+                "--queue",
+                "serial",
+                "--json",
+                "--",
+                "bash",
+                "-c",
+                "sleep .35",
+            ).stdout
+        )
+        queued = json.loads(
+            self.run_cli(
+                "submit",
+                "--queue",
+                "serial",
+                "--timeout",
+                "0.2s",
+                "--json",
+                "--",
+                "bash",
+                "-c",
+                "sleep .05",
+            ).stdout
+        )
+        self.assertEqual(queued["state"], "queued")
+        self.assertEqual(
+            json.loads(
+                self.run_cli("wait", blocker["job_id"], "--json").stdout
+            )["state"],
+            "succeeded",
+        )
+        final = json.loads(
+            self.run_cli("wait", queued["job_id"], "--json").stdout
+        )
+        self.assertEqual(final["state"], "succeeded")
+        self.assertGreater(final["queue_wait_seconds"], 0.2)
+        self.assertLess(final["duration_seconds"], 0.2)
+
+    def test_local_queue_recovers_missing_runners_without_duplicate_start(self) -> None:
+        self.run_cli(
+            "queue", "create", "recover", "--concurrency", "1", "--json"
+        )
+        first = json.loads(
+            self.run_cli(
+                "submit",
+                "--queue",
+                "recover",
+                "--json",
+                "--",
+                "bash",
+                "-c",
+                "sleep 30",
+            ).stdout
+        )
+        marker = Path(self.temp.name) / "recovered.txt"
+        second = json.loads(
+            self.run_cli(
+                "submit",
+                "--queue",
+                "recover",
+                "--json",
+                "--",
+                sys.executable,
+                "-c",
+                f"open({str(marker)!r}, 'a').write('once\\n')",
+            ).stdout
+        )
+
+        database = Path(self.temp.name) / "awaitless.db"
+        deadline = time.monotonic() + 3
+        running: dict[str, object] | None = None
+        waiting: dict[str, object] | None = None
+        while time.monotonic() < deadline:
+            store = Store(database)
+            running = store.get(first["job_id"])
+            waiting = store.get(second["job_id"])
+            store.close()
+            if running and running["state"] == "running" and waiting:
+                break
+            time.sleep(0.03)
+        assert running and waiting
+        self.assertEqual(running["state"], "running")
+        self.assertEqual(waiting["state"], "queued")
+
+        # Simulate a host-level runner crash: neither wrapper gets a chance to
+        # record a transition. A later wait must release the stale slot, restore
+        # the queued runner, and still execute the command exactly once.
+        os.kill(int(running["runner_pid"]), signal.SIGKILL)
+        os.killpg(int(running["pgid"]), signal.SIGKILL)
+        os.kill(int(waiting["runner_pid"]), signal.SIGKILL)
+        final = json.loads(
+            self.run_cli("wait", second["job_id"], "--json").stdout
+        )
+        self.assertEqual(final["state"], "succeeded")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "once\n")
+        stale = json.loads(
+            self.run_cli("status", first["job_id"], "--json").stdout
+        )
+        self.assertEqual(stale["state"], "lost")
 
     def test_logs_are_bounded_and_marked_truncated(self) -> None:
         job = self.submit(sys.executable, "-c", "print('x' * 10000)")
@@ -247,6 +522,73 @@ class CLITest(unittest.TestCase):
         self.assertTrue((remote_job / "cancelled_at").is_file())
         status = json.loads(self.run_cli("status", job, "--json").stdout)
         self.assertEqual(status["state"], "cancelled")
+
+    def test_ssh_queue_is_enforced_on_the_remote_host(self) -> None:
+        remote_home = self.configure_fake_ssh()
+        self.run_cli(
+            "queue", "create", "gpu0", "--concurrency", "1", "--json"
+        )
+        second_client = self.env.copy()
+        second_client["AWAITLESS_DATA_DIR"] = str(Path(self.temp.name) / "other-data")
+        self.run_cli(
+            "queue",
+            "create",
+            "gpu0",
+            "--concurrency",
+            "1",
+            "--json",
+            env=second_client,
+        )
+        events = Path(self.temp.name) / "remote-queue-events.txt"
+
+        def submit_remote(
+            label: str, delay: float, selected_env: dict[str, str]
+        ) -> dict[str, object]:
+            command = (
+                f"printf 'start-{label}\\n' >> {events}; "
+                f"sleep {delay}; printf 'end-{label}\\n' >> {events}"
+            )
+            return json.loads(
+                self.run_cli(
+                    "submit",
+                    "--host",
+                    "fake",
+                    "--queue",
+                    "gpu0",
+                    "--json",
+                    "--",
+                    "bash",
+                    "-c",
+                    command,
+                    env=selected_env,
+                ).stdout
+            )
+
+        first = submit_remote("a", 0.3, self.env)
+        second = submit_remote("b", 0.05, second_client)
+        self.assertEqual(first["state"], "queued")
+        self.assertEqual(second["state"], "queued")
+        self.assertEqual(
+            json.loads(
+                self.run_cli("wait", str(first["job_id"]), "--json").stdout
+            )["state"],
+            "succeeded",
+        )
+        second_final = json.loads(
+            self.run_cli(
+                "wait", str(second["job_id"]), "--json", env=second_client
+            ).stdout
+        )
+        self.assertEqual(second_final["state"], "succeeded")
+        self.assertEqual(
+            events.read_text(encoding="utf-8").splitlines(),
+            ["start-a", "end-a", "start-b", "end-b"],
+        )
+        queue_dir = remote_home / ".awaitless" / "queues" / "gpu0"
+        self.assertEqual(
+            (queue_dir / "concurrency").read_text(encoding="utf-8").strip(), "1"
+        )
+        self.assertEqual(list((queue_dir / "pending").iterdir()), [])
 
 
 if __name__ == "__main__":

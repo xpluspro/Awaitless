@@ -69,7 +69,7 @@ class SlurmBackendTest(unittest.TestCase):
 
     def test_submit_persists_scheduler_id_and_recovers_terminal_state(self) -> None:
         submitted = self.submit()
-        self.assertEqual(submitted["state"], "pending")
+        self.assertEqual(submitted["state"], "queued")
         self.assertEqual(submitted["backend_id"], "12345")
 
         with patch.object(self.backend, "_invoke", return_value="RUNNING\n") as invoke:

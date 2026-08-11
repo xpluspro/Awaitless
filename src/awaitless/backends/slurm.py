@@ -328,7 +328,7 @@ exit $?
         if not slurm_id.isdigit():
             raise SSHError(f"sbatch returned an invalid job ID: {output.strip()!r}")
         return self.store.update_if_active(
-            job["job_id"], state="pending", backend_id=slurm_id
+            job["job_id"], state="queued", backend_id=slurm_id
         )
 
     def _mapped_update(
@@ -356,7 +356,7 @@ exit $?
         )
         updates: dict[str, Any] = {}
         if state in PENDING_STATES:
-            updates["state"] = "pending"
+            updates["state"] = "queued"
         elif state in RUNNING_STATES:
             updates["state"] = "running"
             updates["started_at"] = job.get("started_at") or utc_now()

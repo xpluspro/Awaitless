@@ -1,6 +1,6 @@
 ---
 name: awaitless
-description: Run, wait for, recover, inspect, or cancel durable long-running local and SSH commands with the Awaitless CLI. Use when a coding task launches a non-interactive command expected to run longer than 30 seconds, when an SSH job must survive disconnects, or when bounded logs and structured benchmark artifacts should be returned without repeated sleep/ps/tail polling.
+description: Submit, queue, wait for, recover, inspect, or cancel durable long-running local and SSH commands with the Awaitless CLI. Use when a coding task launches a non-interactive command expected to run longer than 30 seconds, when work must wait for a named concurrency-limited resource, when an SSH job must survive disconnects, or when bounded logs and structured benchmark artifacts should be returned without repeated sleep/ps/tail/nvidia-smi polling.
 ---
 
 # Use Awaitless
@@ -21,6 +21,10 @@ description: Run, wait for, recover, inspect, or cancel durable long-running loc
    ```
 
    Add `--host <configured-host>` for SSH. Declare machine-readable output with `--artifact results.json`.
+
+   When the user has named a preconfigured scarce resource, add
+   `--queue <name>`. Submit once even when the queue is busy; do not check the
+   resource first. Create or change queue policy only when the user asks.
 
 2. Save the returned `job_id`.
 
