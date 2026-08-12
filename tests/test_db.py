@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import threading
 import time
@@ -213,6 +214,162 @@ class StoreConcurrencyTest(unittest.TestCase):
                 ["queued", "starting", "queued"],
             )
             store.close()
+
+    def test_completion_feed_is_unique_ordered_and_paginated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = Store(root / "awaitless.db")
+            store.create(self.submission_values(root, "job_a"))
+            store.create(self.submission_values(root, "job_b"))
+            store.update_if_active(
+                "job_a",
+                state="succeeded",
+                exit_code=0,
+                finished_at="2026-08-12T00:00:01Z",
+            )
+            store.update_if_active(
+                "job_b",
+                state="failed",
+                exit_code=7,
+                finished_at="2026-08-12T00:00:02Z",
+            )
+
+            first = store.completion_events(
+                ["job_a", "job_b"], after_id=0, limit=1
+            )
+            self.assertEqual(
+                (first[0]["job_id"], first[0]["state"]),
+                ("job_a", "succeeded"),
+            )
+            second = store.completion_events(
+                ["job_a", "job_b"], after_id=first[0]["id"], limit=1
+            )
+            self.assertEqual(
+                (second[0]["job_id"], second[0]["state"]),
+                ("job_b", "failed"),
+            )
+            replay = store.completion_events(
+                ["job_a", "job_b"], after_id=0, limit=1
+            )
+            self.assertEqual(replay, first)
+            self.assertGreaterEqual(store.max_event_id(), second[0]["id"])
+            with self.assertRaisesRegex(ValueError, "terminal job"):
+                store.update("job_a", state="cancelled")
+            terminal = [
+                event
+                for event in store.events("job_a")
+                if event["state"] in {"succeeded", "failed", "cancelled"}
+            ]
+            self.assertEqual(len(terminal), 1)
+            store.close()
+
+    def test_v04_terminal_rows_are_backfilled_and_deduplicated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database = root / "awaitless.db"
+            store = Store(database)
+            store.create(self.submission_values(root, "job_legacy"))
+            store.update_if_active(
+                "job_legacy",
+                state="succeeded",
+                exit_code=0,
+                finished_at="2026-08-11T12:00:00Z",
+            )
+            store.close()
+
+            legacy = sqlite3.connect(database)
+            legacy.execute("DROP INDEX state_events_terminal_job_idx")
+            legacy.execute(
+                "DELETE FROM state_events WHERE job_id=? AND state='succeeded'",
+                ("job_legacy",),
+            )
+            legacy.execute(
+                "INSERT INTO state_events(job_id,state,occurred_at) VALUES(?,?,?)",
+                ("job_legacy", "failed", "2026-08-11T12:00:01Z"),
+            )
+            legacy.execute(
+                "INSERT INTO state_events(job_id,state,occurred_at) VALUES(?,?,?)",
+                ("job_legacy", "cancelled", "2026-08-11T12:00:02Z"),
+            )
+            legacy.commit()
+            legacy.close()
+
+            migrated = Store(database)
+            events = migrated.completion_events(
+                ["job_legacy"], after_id=0, limit=10
+            )
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["state"], "succeeded")
+            self.assertEqual(events[0]["finished_at"], "2026-08-11T12:00:00Z")
+            migrated.close()
+
+            reopened = Store(database)
+            self.assertEqual(
+                len(
+                    reopened.completion_events(
+                        ["job_legacy"], after_id=0, limit=10
+                    )
+                ),
+                1,
+            )
+            with self.assertRaises(sqlite3.IntegrityError):
+                reopened.connection.execute(
+                    "INSERT INTO state_events(job_id,state,occurred_at) VALUES(?,?,?)",
+                    ("job_legacy", "failed", "2026-08-12T00:00:00Z"),
+                )
+            reopened.close()
+
+    def test_completion_reads_are_safe_across_racing_connections(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database = root / "awaitless.db"
+            setup = Store(database)
+            setup.create(self.submission_values(root, "job_delivery"))
+            setup.update_if_active(
+                "job_delivery",
+                state="succeeded",
+                exit_code=0,
+                finished_at="2026-08-12T01:00:00Z",
+            )
+            setup.close()
+
+            ready = [threading.Event(), threading.Event()]
+            start = threading.Event()
+            results: list[list[dict[str, object]]] = []
+            errors: list[BaseException] = []
+
+            def read(index: int) -> None:
+                store: Store | None = None
+                try:
+                    store = Store(database)
+                    ready[index].set()
+                    if not start.wait(timeout=2):
+                        raise TimeoutError("completion readers did not start")
+                    results.append(
+                        store.completion_events(
+                            ["job_delivery"], after_id=0, limit=50
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    if store:
+                        store.close()
+
+            threads = [threading.Thread(target=read, args=(index,)) for index in range(2)]
+            for thread in threads:
+                thread.start()
+            self.assertTrue(ready[0].wait(timeout=2))
+            self.assertTrue(ready[1].wait(timeout=2))
+            start.set()
+            for thread in threads:
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+
+            self.assertEqual(errors, [])
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0], results[1])
+            self.assertEqual(len(results[0]), 1)
 
 
 if __name__ == "__main__":

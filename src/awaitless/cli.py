@@ -20,7 +20,9 @@ from .util import new_job_id, parse_duration
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="awaitless", description="Durable long-running jobs for AI coding agents")
+    root = argparse.ArgumentParser(
+        prog="awaitless", description="Durable execution for coding agents"
+    )
     root.add_argument("--config", help="configuration TOML path")
     root.add_argument("--json", action="store_true", dest="global_json", help="emit JSON")
     root.add_argument("--verbose", action="store_true")
@@ -58,6 +60,15 @@ def parser() -> argparse.ArgumentParser:
     wait.add_argument("job_id")
     wait.add_argument("--timeout")
     wait.add_argument("--json", action="store_true")
+
+    completions = commands.add_parser(
+        "completions", help="wait for durable completions across multiple jobs"
+    )
+    completions.add_argument("job_ids", nargs="+")
+    completions.add_argument("--after", dest="after_cursor")
+    completions.add_argument("--timeout")
+    completions.add_argument("--limit", type=int, default=50)
+    completions.add_argument("--json", action="store_true")
 
     status = commands.add_parser("status", help="show current job state")
     status.add_argument("job_id")
@@ -98,7 +109,8 @@ def parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true")
 
     demo = commands.add_parser(
-        "demo", help="submit locally, kill one waiter, and recover from a new client"
+        "demo",
+        help="submit two jobs, kill one completion waiter, and recover their results",
     )
     demo.add_argument("--duration", default="1.2s")
     demo.add_argument("--interrupt-after", default="0.15s")
@@ -164,6 +176,18 @@ def _human_queue(queue: dict[str, Any]) -> str:
     )
 
 
+def _human_completion(completion: dict[str, Any]) -> str:
+    result = completion.get("result") or {}
+    fields = [
+        completion["completion_id"],
+        completion["job_id"],
+        completion["state"],
+    ]
+    if result.get("exit_code") is not None:
+        fields.append(f"exit={result['exit_code']}")
+    return "\t".join(str(field) for field in fields)
+
+
 def _demo(
     service: Service,
     *,
@@ -177,34 +201,48 @@ def _demo(
         raise AwaitlessError("--interrupt-after must be positive and shorter than --duration")
 
     marker = secrets.token_hex(8)
-    client_request_id = f"demo:{marker}"
     work = service.settings.data_dir / "demo-work" / marker
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
-    payload = json.dumps({"demo_recovered": True, "marker": marker})
-    source = (
-        "import json,time; from pathlib import Path; "
-        f"time.sleep({duration!r}); "
-        f"Path('result.json').write_text({payload!r}, encoding='utf-8'); "
-        f"print('AWAITLESS_DEMO_RECOVERED={marker}')"
-    )
-    submitted = service.submit(
-        job_id=new_job_id(),
-        command=[sys.executable, "-c", source],
-        backend="local",
-        host=None,
-        cwd=str(work),
-        env={},
-        timeout_seconds=duration + 10,
-        stall_timeout_seconds=None,
-        name="awaitless-recovery-demo",
-        artifacts=["result.json"],
-        client_request_id=client_request_id,
-    )
+    submissions: list[dict[str, Any]] = []
+    expected_by_job: dict[str, dict[str, Any]] = {}
+    for index, selected_duration in enumerate((duration, duration * 1.25), start=1):
+        job_work = work / f"job-{index}"
+        job_work.mkdir(mode=0o700)
+        expected = {
+            "demo_recovered": True,
+            "marker": marker,
+            "job": index,
+        }
+        payload = json.dumps(expected, separators=(",", ":"))
+        source = (
+            "import time; from pathlib import Path; "
+            f"time.sleep({selected_duration!r}); "
+            f"Path('result.json').write_text({payload!r}, encoding='utf-8'); "
+            f"print('AWAITLESS_DEMO_RECOVERED={marker}:{index}')"
+        )
+        submitted = service.submit(
+            job_id=new_job_id(),
+            command=[sys.executable, "-c", source],
+            backend="local",
+            host=None,
+            cwd=str(job_work),
+            env={},
+            timeout_seconds=selected_duration + 10,
+            stall_timeout_seconds=None,
+            name=f"awaitless-recovery-demo-{index}",
+            artifacts=["result.json"],
+            client_request_id=f"demo:{marker}:{index}",
+        )
+        submissions.append(submitted)
+        expected_by_job[submitted["job_id"]] = expected
 
-    command = [sys.executable, "-m", "awaitless"]
+    base_command = [sys.executable, "-m", "awaitless"]
     if config_path:
-        command.extend(["--config", config_path])
-    command.extend(["wait", submitted["job_id"], "--json"])
+        base_command.extend(["--config", config_path])
+    base_command.extend(
+        ["completions", *(item["job_id"] for item in submissions)]
+    )
+    command = [*base_command, "--json"]
     waiter = subprocess.Popen(
         command,
         cwd=Path.cwd(),
@@ -224,39 +262,73 @@ def _demo(
         waiter.kill()
         waiter.communicate(timeout=5)
     if not first_waiter_terminated:
-        raise AwaitlessError("demo task finished before the first client could be interrupted")
+        raise AwaitlessError(
+            "demo work finished before the first client could be interrupted"
+        )
 
-    resumed = subprocess.run(
-        command,
-        cwd=Path.cwd(),
-        env=os.environ.copy(),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-        timeout=duration + 15,
-    )
-    if resumed.returncode != 0:
-        detail = (resumed.stderr or resumed.stdout).strip()[-2000:]
-        raise AwaitlessError(f"new demo client failed to recover the job: {detail}")
-    try:
-        final = json.loads(resumed.stdout)
-    except json.JSONDecodeError as exc:
-        raise AwaitlessError("new demo client returned invalid JSON") from exc
-    expected = {"demo_recovered": True, "marker": marker}
-    if final.get("state") != "succeeded" or final.get("parsed_results") != expected:
-        raise AwaitlessError("new demo client did not recover the expected result")
+    recovered: list[dict[str, Any]] = []
+    cursor: str | None = None
+    active = [item["job_id"] for item in submissions]
+    has_more = False
+    deadline = time.monotonic() + duration * 1.25 + 15
+    while active or has_more:
+        if time.monotonic() >= deadline:
+            raise AwaitlessError("demo timed out while recovering completions")
+        resume_command = list(base_command)
+        if cursor is not None:
+            resume_command.extend(["--after", cursor])
+        resume_command.append("--json")
+        resumed = subprocess.run(
+            resume_command,
+            cwd=Path.cwd(),
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=max(1.0, deadline - time.monotonic()),
+        )
+        if resumed.returncode != 0:
+            detail = (resumed.stderr or resumed.stdout).strip()[-2000:]
+            raise AwaitlessError(
+                f"new demo client failed to recover completions: {detail}"
+            )
+        try:
+            batch = json.loads(resumed.stdout)
+        except json.JSONDecodeError as exc:
+            raise AwaitlessError("new demo client returned invalid JSON") from exc
+        recovered.extend(batch.get("completions", []))
+        cursor = batch.get("next_cursor")
+        active = batch.get("active_job_ids", [])
+        has_more = bool(batch.get("has_more"))
+
+    recovered_by_job = {item["job_id"]: item for item in recovered}
+    if set(recovered_by_job) != set(expected_by_job):
+        raise AwaitlessError("new demo client did not recover every completion")
+    for job_id, expected in expected_by_job.items():
+        completion = recovered_by_job[job_id]
+        if (
+            completion.get("state") != "succeeded"
+            or completion.get("result", {}).get("parsed_results") != expected
+        ):
+            raise AwaitlessError("new demo client recovered an invalid result")
+    first = recovered_by_job[submissions[0]["job_id"]]
     return {
         "ok": True,
-        "job_id": submitted["job_id"],
-        "client_request_id": client_request_id,
+        "job_id": submissions[0]["job_id"],
+        "job_ids": [item["job_id"] for item in submissions],
+        "client_request_id": submissions[0]["client_request_id"],
+        "client_request_ids": [item["client_request_id"] for item in submissions],
         "first_waiter_terminated": True,
         "recovered_by_new_client": True,
-        "state": final["state"],
-        "exit_code": final["exit_code"],
-        "stdout_tail": final["stdout_tail"],
-        "parsed_results": final["parsed_results"],
+        "completion_count": len(recovered),
+        "next_cursor": cursor,
+        "completions": recovered,
+        "state": first["state"],
+        "exit_code": first["result"]["exit_code"],
+        "stdout_tail": first["result"]["stdout_tail"],
+        "parsed_results": first["result"]["parsed_results"],
         "work_dir": str(work),
     }
 
@@ -304,6 +376,29 @@ def main(argv: list[str] | None = None) -> int:
             result, wait_timed_out = service.wait(args.job_id, parse_duration(args.timeout))
             _print(result, json_mode, quiet=args.quiet)
             return 4 if wait_timed_out else EXIT_CODES.get(result["state"], 1)
+        if args.action == "completions":
+            result = service.completions(
+                args.job_ids,
+                after_cursor=args.after_cursor,
+                wait_timeout=parse_duration(args.timeout),
+                limit=args.limit,
+            )
+            if json_mode:
+                _print(result, True, quiet=args.quiet)
+            elif not args.quiet:
+                for completion in result["completions"]:
+                    print(_human_completion(completion))
+                if result["completions"]:
+                    print(f"next_cursor={result['next_cursor']}")
+                if result["has_more"]:
+                    print("has_more=true")
+                if result["wait_timed_out"]:
+                    active = ",".join(result["active_job_ids"])
+                    print(
+                        f"awaitless: completion wait timed out; active={active}",
+                        file=sys.stderr,
+                    )
+            return 4 if result["wait_timed_out"] else 0
         if args.action == "status":
             result = service.status(args.job_id)
             _print(result, json_mode, quiet=args.quiet)
@@ -392,12 +487,14 @@ def main(argv: list[str] | None = None) -> int:
             if json_mode:
                 _print(result, True, quiet=args.quiet)
             elif not args.quiet:
-                print(f"submitted {result['job_id']}")
-                print("terminated the first waiting client; managed job kept running")
+                print(f"submitted {', '.join(result['job_ids'])}")
                 print(
-                    "new client recovered "
-                    f"state={result['state']} exit={result['exit_code']} "
-                    f"artifact={json.dumps(result['parsed_results'], ensure_ascii=False)}"
+                    "terminated the first completion waiter; managed jobs kept running"
+                )
+                print(
+                    "new clients recovered "
+                    f"completions={result['completion_count']} "
+                    f"cursor={result['next_cursor']}"
                 )
             return 0
         return 2

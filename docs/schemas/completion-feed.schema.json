@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xpluspro/Awaitless/blob/main/docs/schemas/completion-feed.schema.json",
+  "title": "Awaitless completion feed",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "completions",
+    "next_cursor",
+    "active_job_ids",
+    "unreachable_job_ids",
+    "has_more",
+    "wait_timed_out"
+  ],
+  "properties": {
+    "completions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/completion"}
+    },
+    "next_cursor": {"$ref": "#/$defs/cursor"},
+    "active_job_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "unreachable_job_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "has_more": {"type": "boolean"},
+    "wait_timed_out": {"type": "boolean"}
+  },
+  "$defs": {
+    "cursor": {
+      "type": "string",
+      "pattern": "^cmp_[0-9]{1,19}$"
+    },
+    "terminal_state": {
+      "enum": ["succeeded", "failed", "cancelled", "timed_out", "lost"]
+    },
+    "completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completion_id",
+        "job_id",
+        "state",
+        "finished_at",
+        "observed_at",
+        "result"
+      ],
+      "properties": {
+        "completion_id": {"$ref": "#/$defs/cursor"},
+        "job_id": {"type": "string", "minLength": 1},
+        "state": {"$ref": "#/$defs/terminal_state"},
+        "finished_at": {"type": ["string", "null"]},
+        "observed_at": {"type": "string"},
+        "result": {"$ref": "#/$defs/result"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "job_id",
+        "state",
+        "finished_at",
+        "exit_code",
+        "stdout_tail",
+        "stderr_tail",
+        "truncated",
+        "artifacts"
+      ],
+      "properties": {
+        "job_id": {"type": "string", "minLength": 1},
+        "state": {"$ref": "#/$defs/terminal_state"},
+        "finished_at": {"type": ["string", "null"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "stdout_tail": {"type": "string"},
+        "stderr_tail": {"type": "string"},
+        "truncated": {"type": "boolean"},
+        "artifacts": {"type": "array"}
+      }
+    }
+  }
+}

@@ -91,6 +91,44 @@ class SlurmBackendTest(unittest.TestCase):
         self.assertEqual(stored["backend_id"], "12345")
         self.assertEqual(stored["artifact_paths"], ["result.json"])
 
+        with (
+            patch.object(
+                self.backend,
+                "read_logs",
+                return_value={
+                    "stdout_tail": "scheduled\n",
+                    "stderr_tail": "failed\n",
+                    "truncated": False,
+                },
+            ),
+            patch.object(
+                self.backend,
+                "artifacts",
+                return_value=[
+                    {
+                        "path": "result.json",
+                        "remote": True,
+                        "exists": True,
+                        "content": {"scheduler": "slurm"},
+                    }
+                ],
+            ),
+        ):
+            feed = self.service.completions(
+                ["job_SLURM"], wait_timeout=0, limit=50
+            )
+        self.assertEqual(len(feed["completions"]), 1)
+        completion = feed["completions"][0]
+        self.assertEqual(completion["state"], "failed")
+        self.assertEqual(completion["result"]["exit_code"], 7)
+        self.assertEqual(
+            completion["result"]["parsed_results"], {"scheduler": "slurm"}
+        )
+        replay = self.service.store.completion_events(
+            ["job_SLURM"], after_id=0, limit=10
+        )
+        self.assertEqual(len(replay), 1)
+
     def test_timeout_and_signal_exit_codes_are_mapped(self) -> None:
         self.submit("job_TIMEOUT")
         job = self.service.require("job_TIMEOUT")

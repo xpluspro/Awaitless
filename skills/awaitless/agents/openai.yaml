@@ -1,4 +1,4 @@
 interface:
   display_name: "Awaitless"
-  short_description: "Submit and resume durable queued coding jobs"
-  default_prompt: "Use $awaitless to submit this long command once, including a named queue when it must wait for a scarce resource."
+  short_description: "Submit and consume durable queued coding jobs"
+  default_prompt: "Use $awaitless to submit this long-running work once and consume its durable results."

@@ -100,6 +100,159 @@ class CLITest(unittest.TestCase):
         final = json.loads(self.run_cli("wait", job, "--json").stdout)
         self.assertEqual(final["state"], "succeeded")
 
+    def test_completion_feed_recovers_replays_paginates_and_times_out(self) -> None:
+        work = Path(self.temp.name) / "completion-work"
+        work.mkdir()
+
+        def completion_job(label: str, delay: float) -> str:
+            source = (
+                "from pathlib import Path; import json,time; "
+                f"time.sleep({delay}); "
+                f"Path('{label}.json').write_text(json.dumps({{'label': {label!r}}})); "
+                f"print({label!r})"
+            )
+            return self.submit(
+                sys.executable,
+                "-c",
+                source,
+                options=("--cwd", str(work), "--artifact", f"{label}.json"),
+            )
+
+        first_job = completion_job("first", 0.12)
+        second_job = completion_job("second", 0.22)
+        first_batch = json.loads(
+            self.run_cli(
+                "completions",
+                first_job,
+                second_job,
+                "--limit",
+                "1",
+                "--timeout",
+                "2s",
+                "--json",
+            ).stdout
+        )
+        self.assertEqual(len(first_batch["completions"]), 1)
+        first_completion = first_batch["completions"][0]
+        self.assertIn(first_completion["job_id"], {first_job, second_job})
+        self.assertEqual(first_completion["state"], "succeeded")
+        self.assertEqual(
+            first_completion["result"]["parsed_results"]["label"],
+            first_completion["result"]["stdout_tail"].strip(),
+        )
+
+        replay = json.loads(
+            self.run_cli(
+                "completions",
+                first_job,
+                second_job,
+                "--limit",
+                "1",
+                "--json",
+            ).stdout
+        )
+        self.assertEqual(
+            replay["completions"][0]["completion_id"],
+            first_completion["completion_id"],
+        )
+
+        second_batch = json.loads(
+            self.run_cli(
+                "completions",
+                first_job,
+                second_job,
+                "--after",
+                first_batch["next_cursor"],
+                "--timeout",
+                "2s",
+                "--json",
+            ).stdout
+        )
+        self.assertEqual(len(second_batch["completions"]), 1)
+        self.assertNotEqual(
+            second_batch["completions"][0]["completion_id"],
+            first_completion["completion_id"],
+        )
+        self.assertEqual(second_batch["active_job_ids"], [])
+        paginated = json.loads(
+            self.run_cli(
+                "completions",
+                first_job,
+                second_job,
+                "--limit",
+                "1",
+                "--json",
+            ).stdout
+        )
+        self.assertTrue(paginated["has_more"])
+
+        drained = json.loads(
+            self.run_cli(
+                "completions",
+                first_job,
+                second_job,
+                "--after",
+                second_batch["next_cursor"],
+                "--timeout",
+                "0",
+                "--json",
+            ).stdout
+        )
+        self.assertEqual(drained["completions"], [])
+        self.assertFalse(drained["wait_timed_out"])
+        self.assertFalse(drained["has_more"])
+
+        active_job = self.submit("bash", "-c", "sleep 10")
+        timed_out = json.loads(
+            self.run_cli(
+                "completions",
+                active_job,
+                "--timeout",
+                "0",
+                "--json",
+                expected=4,
+            ).stdout
+        )
+        self.assertTrue(timed_out["wait_timed_out"])
+        self.assertEqual(timed_out["active_job_ids"], [active_job])
+        self.run_cli("cancel", active_job, "--grace-period", "0", "--json")
+
+        malformed = self.run_cli(
+            "completions",
+            first_job,
+            "--after",
+            "not-a-cursor",
+            "--json",
+            expected=2,
+        )
+        self.assertIn("completion cursor", malformed.stderr)
+        out_of_range = self.run_cli(
+            "completions",
+            first_job,
+            "--after",
+            "cmp_9223372036854775808",
+            "--json",
+            expected=2,
+        )
+        self.assertIn("out of range", out_of_range.stderr)
+        unknown = self.run_cli(
+            "completions", "job_unknown", "--json", expected=2
+        )
+        self.assertIn("unknown job ID", unknown.stderr)
+        invalid_limit = self.run_cli(
+            "completions", first_job, "--limit", "0", "--json", expected=2
+        )
+        self.assertIn("limit must be between", invalid_limit.stderr)
+        future = self.run_cli(
+            "completions",
+            first_job,
+            "--after",
+            "cmp_9999999999999999",
+            "--json",
+            expected=2,
+        )
+        self.assertIn("ahead of this Awaitless store", future.stderr)
+
     def test_launch_failure_is_not_reported_as_running(self) -> None:
         result = self.run_cli("submit", "--json", "--", "/definitely/not/a/command", expected=2)
         self.assertIn("failed to start command", json.loads(result.stderr)["error"])
@@ -127,15 +280,34 @@ class CLITest(unittest.TestCase):
         self.assertFalse(replay["created"])
 
         events = Path(self.temp.name) / "queue-events.txt"
+        release_first = Path(self.temp.name) / "release-first-job"
 
-        def queued_job(label: str, delay: float) -> dict[str, object]:
-            source = (
-                "import time; "
-                f"p={str(events)!r}; "
-                f"open(p,'a').write('start-{label}\\n'); "
-                f"time.sleep({delay}); "
-                f"open(p,'a').write('end-{label}\\n')"
+        def queued_job(
+            label: str, delay: float, *, hold_for_release: bool = False
+        ) -> dict[str, object]:
+            lines = [
+                "import time",
+                "from pathlib import Path",
+                f"p={str(events)!r}",
+                f"open(p,'a').write('start-{label}\\n')",
+            ]
+            if hold_for_release:
+                lines.extend(
+                    (
+                        "deadline = time.monotonic() + 10",
+                        f"while not Path({str(release_first)!r}).exists():",
+                        "    if time.monotonic() >= deadline:",
+                        "        raise TimeoutError('queue test release was not created')",
+                        "    time.sleep(0.02)",
+                    )
+                )
+            lines.extend(
+                (
+                    f"time.sleep({delay})",
+                    f"open(p,'a').write('end-{label}\\n')",
+                )
             )
+            source = "\n".join(lines)
             return json.loads(
                 self.run_cli(
                     "submit",
@@ -149,16 +321,33 @@ class CLITest(unittest.TestCase):
                 ).stdout
             )
 
-        first = queued_job("a", 0.35)
+        # Hold the first slot until the cancellation request has been issued.
+        # This keeps the third command queued even when CLI startup is slow.
+        first = queued_job("a", 0.05, hold_for_release=True)
         second = queued_job("b", 0.05)
         cancelled = queued_job("cancelled", 0.05)
         self.assertIn(first["state"], {"queued", "starting", "running"})
         self.assertEqual(second["state"], "queued")
         self.assertEqual(cancelled["state"], "queued")
-        cancelled_result = json.loads(
-            self.run_cli("cancel", str(cancelled["job_id"]), "--json").stdout
-        )
+        try:
+            cancelled_result = json.loads(
+                self.run_cli("cancel", str(cancelled["job_id"]), "--json").stdout
+            )
+        finally:
+            release_first.touch()
         self.assertEqual(cancelled_result["state"], "cancelled")
+        cancelled_completion = json.loads(
+            self.run_cli(
+                "completions",
+                str(cancelled["job_id"]),
+                "--timeout",
+                "0",
+                "--json",
+            ).stdout
+        )["completions"]
+        self.assertEqual(len(cancelled_completion), 1)
+        self.assertEqual(cancelled_completion[0]["state"], "cancelled")
+        self.assertIsNone(cancelled_completion[0]["result"]["started_at"])
 
         self.assertEqual(
             json.loads(
@@ -248,7 +437,9 @@ with open(lock_path, 'a') as lock:
     state['maximum'] = max(state['maximum'], state['active'])
     open(state_path, 'w').write(json.dumps(state))
     fcntl.flock(lock, fcntl.LOCK_UN)
-time.sleep(0.2)
+# Keep the slot occupied long enough for cold Python interpreters on the
+# oldest supported runtime to admit the second worker deterministically.
+time.sleep(0.5)
 with open(lock_path, 'a') as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
     state = json.load(open(state_path))
@@ -386,6 +577,15 @@ with open(lock_path, 'a') as lock:
         value = json.loads(self.run_cli("logs", job, "--tail", "200", "--max-bytes", "200", "--json").stdout)
         self.assertTrue(value["truncated"])
         self.assertLessEqual(len(value["stdout_tail"].encode()), 100)
+        Path(self.env["AWAITLESS_CONFIG"]).write_text(
+            "[defaults]\npoll_interval = 0.05\nmax_return_bytes = 200\n",
+            encoding="utf-8",
+        )
+        completion = json.loads(
+            self.run_cli("completions", job, "--json").stdout
+        )["completions"][0]["result"]
+        self.assertTrue(completion["truncated"])
+        self.assertLessEqual(len(completion["stdout_tail"].encode()), 100)
 
     def test_json_artifact_is_parsed(self) -> None:
         work = Path(self.temp.name) / "work"
@@ -485,6 +685,9 @@ with open(lock_path, 'a') as lock:
         self.assertTrue(value["ok"])
         self.assertTrue(value["first_waiter_terminated"])
         self.assertTrue(value["recovered_by_new_client"])
+        self.assertEqual(value["completion_count"], 2)
+        self.assertEqual(len(value["job_ids"]), 2)
+        self.assertEqual(len(value["completions"]), 2)
         self.assertEqual(value["state"], "succeeded")
         self.assertTrue(value["parsed_results"]["demo_recovered"])
 
@@ -510,6 +713,29 @@ with open(lock_path, 'a') as lock:
         remote_job = remote_home / ".awaitless" / "jobs" / job
         self.assertTrue((remote_job / "pid_start_ticks").read_text().strip().isdigit())
         self.assertTrue((remote_job / "heartbeat").is_file())
+        # Result delivery is independently retryable after the terminal event.
+        fail_once.touch()
+        completion = json.loads(
+            self.run_cli(
+                "completions",
+                job,
+                "--timeout",
+                "0",
+                "--json",
+                expected=4,
+            ).stdout
+        )
+        self.assertEqual(completion["completions"], [])
+        self.assertEqual(completion["unreachable_job_ids"], [job])
+        self.assertTrue(completion["has_more"])
+        completion = json.loads(
+            self.run_cli(
+                "completions", job, "--timeout", "2s", "--json"
+            ).stdout
+        )["completions"]
+        self.assertEqual(len(completion), 1)
+        self.assertEqual(completion[0]["state"], "succeeded")
+        self.assertEqual(completion[0]["result"]["parsed_results"], {"ok": True})
 
     def test_ssh_cancel_records_durable_marker(self) -> None:
         remote_home = self.configure_fake_ssh()

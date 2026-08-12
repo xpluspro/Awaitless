@@ -4,11 +4,15 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**别再让 Coding Agent 轮询长任务和稀缺资源。**
+**面向 Coding Agents 的持久化执行层。**
 
-Awaitless 把本地、SSH 和 Slurm 命令变成持久任务：提交一次、断开连接，之后再取回
-退出码、有限日志和 JSON 结果。命名队列还可以在本地或 SSH 容量可用前替 Agent 等待。
-工作负载始终运行在你自己的基础设施上。
+长任务只需提交一次。Awaitless 负责 Local、SSH 和 Slurm 上的排队、稀缺资源、断线与
+结果交付；工作负载始终运行在你自己的基础设施上。
+
+> **Agents submit work. Awaitless owns execution.**
+
+Awaitless 位于 Coding Agent 与计算资源之间，对上提供一套稳定的 Job 契约，对下复用你
+已有的本地机器、SSH 主机与 Slurm 集群。
 
 [English](README.md) · [完整文档](docs/README.md) ·
 [Benchmark](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
@@ -33,9 +37,11 @@ Awaitless 在 20/20 个案例中都正确返回了状态、退出码、Artifact 
 
 ![Awaitless SSH 提交、断开、恢复与 Artifact 演示](https://raw.githubusercontent.com/xpluspro/Awaitless/main/assets/awaitless-demo.gif)
 
-## 删掉 Agent 的轮询循环
+## Coding Agent 应该写代码，而不是照看任务
 
-没有 Awaitless 时，Agent 启动任务后会反复把同一份、越来越长的日志拉回上下文：
+Agent 完全可以自己写 `run → sleep → check`。更难的问题是让任务身份、断线恢复、资源
+准入、取消和结果交付在长工作负载与不同 session 之间保持可靠。缺少这层执行基础设施时，
+Agent 会反复把同一份、越来越长的日志拉回上下文：
 
 ```bash
 ssh gpu 'run_benchmark > job.log 2>&1 &'
@@ -43,7 +49,7 @@ ssh gpu 'tail -n 200 job.log'  # 再查一次……
 ssh gpu 'tail -n 200 job.log'  # 再查一次……
 ```
 
-使用 Awaitless，只需提交一次、等待一次：
+Awaitless 把这段生命周期收敛为一次持久提交和一个结果边界：
 
 ```bash
 awaitless submit --json --host gpu --artifact results.json -- ./run_benchmark
@@ -71,6 +77,26 @@ awaitless submit --queue gpu0 -- python train_c.py
 第一条命令运行，其余任务显示 `queued`；容量释放后，下一个任务会自动启动。第一版没有
 priority 和抢占，只有固定并发与 FIFO admission，也绝不会为了后来的任务杀掉正在运行的工作。
 
+## 哪个任务先完成，就先消费哪个结果
+
+先提交所有相互独立的工作并保存 Job ID，然后在一个持久 completion 边界等待：
+
+```bash
+awaitless completions job_A job_B job_C --json
+# {"completions":[...],"next_cursor":"cmp_...","active_job_ids":[...]}
+
+awaitless completions job_A job_B job_C --after cmp_... --json
+```
+
+第一次调用会立即返回已经完成的工作；没有结果时则阻塞到至少一个所选 Job 完成。处理完
+当前批次后再前进到 `next_cursor`；复用旧 cursor 会安全重放相同的 completion ID。客户端
+消失后，新 session 可以从保存的 cursor 继续。Awaitless 负责让 continuation result 持久
+可用，但不会替 Agent 执行下一步推理，也不要求常驻通知服务。
+
+在仓库内可复现的三 Job 确定性协议案例中，逐 Job polling 与取回结果用了 13 次 Agent 可见
+CLI 调用，completion feed 使用 6 次。它是协议 benchmark，不代表模型或 token 结论。参见
+[方法和原始结果](benchmarks/README.md#multi-job-completion-benchmark)。
+
 ## 30 秒体验断线恢复
 
 Awaitless 需要 Linux、Python 3.10+ 和 Bash。不做持久安装即可运行内置演示：
@@ -79,8 +105,8 @@ Awaitless 需要 Linux、Python 3.10+ 和 Bash。不做持久安装即可运行�
 uvx --from awaitless-runner awaitless demo --json
 ```
 
-演示会提交一个本地任务，终止第一个等待客户端，然后仅凭 job ID 从新客户端恢复，
-并校验 JSON Artifact。
+演示会提交两个本地任务，终止第一个 completion waiter，然后从新客户端按 cursor 消费
+两个有限结果并校验 JSON Artifact。
 
 日常 CLI 使用：
 
@@ -108,7 +134,8 @@ awaitless doctor --json
 
 然后让 Agent 用 Awaitless 执行长命令即可。支持 MCP Tasks 的客户端会立即获得持久
 Task handle；其他客户端使用 `submit_job`，之后调用 `wait_for_job`。昂贵任务使用相同
-`client_request_id` 重试时不会重复启动。
+`client_request_id` 重试时不会重复启动。并行任务可以通过 `wait_for_completions` 统一消费，
+无论客户端是否支持 MCP Tasks。
 
 直接使用 CLI 的完整流程只有两步：
 
@@ -152,7 +179,8 @@ flowchart LR
     D --> S["SSH 主机"]
     D --> H["Slurm allocation"]
     A -. "凭稳定 ID 重连" .-> C
-    C -->|"状态 + 退出码 + 有限日志 + Artifact"| A
+    C --> E["持久 completion cursor"]
+    E -->|"状态 + 退出码 + 有限日志 + Artifact"| A
 ```
 
 Awaitless 没有 daemon、HTTP 服务或托管 sandbox。每次调用打开同一份 SQLite store；
@@ -162,6 +190,8 @@ Awaitless 没有 daemon、HTTP 服务或托管 sandbox。每次调用打开同�
 ## 完整文档
 
 - [文档索引](docs/README.md)
+- [产品定位与演进原则](docs/PRD.zh-CN.md)
+- [v0.5 Durable Completion Feed 实现说明](docs/v0.5.zh-CN.md)
 - [CLI、配置、SSH、Slurm、持久化、Artifact 与故障排查](docs/REFERENCE.md)
 - [MCP Tasks 协议与兼容性](docs/MCP_TASKS.md)
 - [Benchmark 定义、方法论与解释边界](metric/README.md)

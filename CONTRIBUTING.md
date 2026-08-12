@@ -1,9 +1,10 @@
 # Contributing to Awaitless
 
-Awaitless is a durable MCP Tasks implementation for commands running on local,
-SSH, and Slurm infrastructure. Contributions should preserve that narrow
-contract: stable identity, safe recovery, bounded results, and correct
-cancellation matter more than adding orchestration layers or new dashboards.
+Awaitless is a durable execution layer for coding agents using local, SSH, and
+Slurm infrastructure. Contributions should preserve that narrow contract:
+stable identity, safe recovery, ordered completion replay, bounded results, and
+correct cancellation matter more than adding orchestration layers or new
+dashboards.
 
 ## Development setup
 
@@ -30,6 +31,8 @@ should include sanitized evidence from an allocated compute node.
   launch side effect before the durable idempotency reservation.
 - Keep MCP Tasks wire models aligned with the current extension and retain the
   established MCP tools during the extension's migration period.
+- Preserve one terminal completion per Job. Never advance a completion cursor
+  past a result that could not be delivered.
 - Update both English and Chinese README sections for user-visible behavior.
 
 ## Pull requests

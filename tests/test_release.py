@@ -22,6 +22,7 @@ class ReleaseMetadataTest(unittest.TestCase):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
         version = project["project"]["version"]
         self.assertEqual(version, __version__)
@@ -30,6 +31,7 @@ class ReleaseMetadataTest(unittest.TestCase):
         self.assertEqual(server["name"], MCP_NAME)
         self.assertIn(f"<!-- mcp-name: {MCP_NAME} -->", readme)
         self.assertEqual(server["packages"][0]["identifier"], project["project"]["name"])
+        self.assertIn(f"## {version} ", changelog)
         self.assertEqual(
             project["project"]["scripts"]["awaitless-runner"],
             "awaitless.mcp_server:main",

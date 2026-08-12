@@ -1,6 +1,6 @@
 ---
 name: awaitless
-description: Submit, queue, wait for, recover, inspect, or cancel durable long-running local and SSH commands with the Awaitless CLI. Use when a coding task launches a non-interactive command expected to run longer than 30 seconds, when work must wait for a named concurrency-limited resource, when an SSH job must survive disconnects, or when bounded logs and structured benchmark artifacts should be returned without repeated sleep/ps/tail/nvidia-smi polling.
+description: Submit, queue, recover, consume completions from, inspect, or cancel durable long-running local, SSH, and Slurm commands with the Awaitless CLI. Use when a coding task launches a non-interactive command expected to run longer than 30 seconds, multiple independent jobs should finish without per-job polling, work must wait for a named concurrency-limited resource, a remote job must survive disconnects, or bounded logs and structured artifacts should return across Agent sessions.
 ---
 
 # Use Awaitless
@@ -28,7 +28,7 @@ description: Submit, queue, wait for, recover, inspect, or cancel durable long-r
 
 2. Save the returned `job_id`.
 
-3. Call wait exactly once:
+3. For one Job, call wait exactly once:
 
    ```bash
    awaitless wait <job_id> --json
@@ -44,12 +44,43 @@ description: Submit, queue, wait for, recover, inspect, or cancel durable long-r
    awaitless logs <job_id> --tail 200 --json
    ```
 
+## Consume multiple completions
+
+1. Submit every independent Job first and save every `job_id`. Do not wait for
+   one Job before submitting the next.
+
+2. Continue useful work when possible, then wait for the first available batch:
+
+   ```bash
+   awaitless completions <job-a> <job-b> <job-c> --json
+   ```
+
+3. Process every returned completion, then save `next_cursor`. Each completion
+   contains the same bounded result contract as `wait`.
+
+4. If `has_more` is true or `active_job_ids` is non-empty, wait again after the
+   saved cursor:
+
+   ```bash
+   awaitless completions <job-a> <job-b> <job-c> \
+     --after <next_cursor> --json
+   ```
+
+   This is a continuation boundary, not a polling loop: each call blocks until
+   a new result exists. Do not insert `sleep`, periodic `status`, or repeated
+   `tasks/get` calls between completion reads.
+
+5. Treat delivery as at-least-once. Advance the cursor only after processing a
+   batch; if a response is lost, reuse the previous cursor and deduplicate by
+   `completion_id`.
+
 ## Recover or intervene
 
-- After an Agent, shell, or SSH interruption, reuse the original ID with `awaitless wait <job_id> --json`.
+- After an Agent, shell, or SSH interruption, reuse the original ID with `awaitless wait <job_id> --json`, or reuse the saved completion cursor for a multi-Job workflow.
 - Use `awaitless status <job_id> --json` for a user-requested one-time check, not as a polling loop.
 - Use `awaitless cancel <job_id> --json` only when the task should actually stop.
-- Treat a client-side wait timeout as a detached waiter: the managed job continues running.
+- Treat a client-side wait or completion timeout as a detached waiter: managed Jobs continue running.
+- When completion delivery reports an unreachable Job, keep the same cursor and retry later; never skip past an undelivered result.
 - On `stalled`, inspect a bounded log tail before deciding whether to keep waiting or cancel.
 
 Never print or ingest complete large logs by default.

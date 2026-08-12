@@ -80,6 +80,7 @@ jobs:
           python -m json.tool assets/demo-session.json >/dev/null
           python -m json.tool assets/mcp-slurm-demo.json >/dev/null
           python -m json.tool benchmarks/results/polling-vs-awaitless.json >/dev/null
+          python -m json.tool benchmarks/results/completion-feed.json >/dev/null
           python -m json.tool metric/configs/smoke.json >/dev/null
           python -m json.tool metric/configs/evidence-local.json >/dev/null
           python -m json.tool metric/configs/agent-smoke.json >/dev/null
@@ -91,7 +92,9 @@ jobs:
           python -m json.tool metric/qualitative/review-template.json >/dev/null
           python -m json.tool metric/schemas/trial.schema.json >/dev/null
           python -m json.tool metric/schemas/long-running-trial.schema.json >/dev/null
+          python -m json.tool docs/schemas/completion-feed.schema.json >/dev/null
           python benchmarks/polling_vs_awaitless.py --help >/dev/null
+          python benchmarks/completion_feed.py --help >/dev/null
           python metric/run_local.py --help >/dev/null
           python metric/analyze.py --help >/dev/null
           python metric/run_agent.py --help >/dev/null

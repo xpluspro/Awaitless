@@ -20,7 +20,11 @@ from .util import atomic_json, parse_time, utc_now
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 CLIENT_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 QUEUE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+COMPLETION_CURSOR = re.compile(r"^cmp_([0-9]{1,19})$")
 SENSITIVE_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|API_KEY", re.I)
+MAX_COMPLETION_JOBS = 500
+MAX_COMPLETION_LIMIT = 500
+MAX_COMPLETION_EVENT_ID = (1 << 63) - 1
 
 
 class AwaitlessError(RuntimeError):
@@ -275,17 +279,158 @@ class Service:
                 time.sleep(max(0.05, min(self.settings.poll_interval, remaining or self.settings.poll_interval)))
                 continue
             if result["state"] in TERMINAL_STATES:
-                result.update(self.logs(job_id, self.settings.log_tail_lines, self.settings.max_return_bytes))
-                result["artifacts"] = self.artifacts(self.require(job_id))
-                parsed = [item.get("content") for item in result["artifacts"] if "content" in item]
-                if len(parsed) == 1:
-                    result["parsed_results"] = parsed[0]
-                return result, False
+                return self._terminal_result(job_id, result), False
             if wait_timeout is not None and time.monotonic() - started >= wait_timeout:
                 result["wait_timed_out"] = True
                 return result, True
             remaining = None if wait_timeout is None else wait_timeout - (time.monotonic() - started)
             time.sleep(max(0.05, min(self.settings.poll_interval, remaining or self.settings.poll_interval)))
+
+    def completions(
+        self,
+        job_ids: list[str],
+        *,
+        after_cursor: str | None = None,
+        wait_timeout: float | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        if not job_ids:
+            raise AwaitlessError("at least one job ID is required")
+        selected = list(dict.fromkeys(job_ids))
+        if len(selected) > MAX_COMPLETION_JOBS:
+            raise AwaitlessError(
+                f"at most {MAX_COMPLETION_JOBS} job IDs may be watched at once"
+            )
+        if any(not isinstance(job_id, str) or not job_id for job_id in selected):
+            raise AwaitlessError("job IDs must be non-empty strings")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit <= 0
+            or limit > MAX_COMPLETION_LIMIT
+        ):
+            raise AwaitlessError(
+                f"limit must be between 1 and {MAX_COMPLETION_LIMIT}"
+            )
+        if wait_timeout is not None and wait_timeout < 0:
+            raise AwaitlessError("completion wait timeout must be non-negative")
+
+        after_id = _parse_completion_cursor(after_cursor)
+        if after_id > self.store.max_event_id():
+            raise AwaitlessError(
+                f"completion cursor {after_cursor!r} is ahead of this Awaitless store"
+            )
+        for job_id in selected:
+            self.require(job_id)
+
+        started = time.monotonic()
+        while True:
+            unreachable: list[str] = []
+            for job_id in selected:
+                job = self.require(job_id)
+                if job["state"] in TERMINAL_STATES:
+                    continue
+                try:
+                    self.status(job_id)
+                except SSHError:
+                    unreachable.append(job_id)
+
+            events = self.store.completion_events(
+                selected, after_id=after_id, limit=limit + 1
+            )
+            has_more = len(events) > limit
+            events = events[:limit]
+            current = {job_id: self.require(job_id) for job_id in selected}
+            active_job_ids = [
+                job_id
+                for job_id in selected
+                if current[job_id]["state"] not in TERMINAL_STATES
+            ]
+            if events:
+                items: list[dict[str, Any]] = []
+                for event in events:
+                    job_id = event["job_id"]
+                    try:
+                        result = self._terminal_result(
+                            job_id, self.summary(current[job_id])
+                        )
+                    except SSHError:
+                        if job_id not in unreachable:
+                            unreachable.append(job_id)
+                        # Cursor order is a delivery guarantee. Never return a
+                        # later event while an earlier remote result is unavailable.
+                        has_more = True
+                        break
+                    items.append(
+                        {
+                            "completion_id": _format_completion_cursor(event["id"]),
+                            "job_id": job_id,
+                            "state": event["state"],
+                            "finished_at": event["finished_at"],
+                            "observed_at": event["observed_at"],
+                            "result": result,
+                        }
+                    )
+                if items:
+                    return {
+                        "completions": items,
+                        "next_cursor": items[-1]["completion_id"],
+                        "active_job_ids": active_job_ids,
+                        "unreachable_job_ids": unreachable,
+                        "has_more": has_more,
+                        "wait_timed_out": False,
+                    }
+
+            response = {
+                "completions": [],
+                "next_cursor": _format_completion_cursor(after_id),
+                "active_job_ids": active_job_ids,
+                "unreachable_job_ids": unreachable,
+                "has_more": bool(events),
+                "wait_timed_out": False,
+            }
+            # A fully terminal and reachable selection cannot produce another
+            # completion after this cursor, so return a drained feed immediately.
+            if not active_job_ids and not unreachable and not events:
+                return response
+            if wait_timeout is not None and time.monotonic() - started >= wait_timeout:
+                response["wait_timed_out"] = True
+                return response
+            remaining = (
+                None
+                if wait_timeout is None
+                else wait_timeout - (time.monotonic() - started)
+            )
+            time.sleep(
+                max(
+                    0.05,
+                    min(
+                        self.settings.poll_interval,
+                        remaining or self.settings.poll_interval,
+                    ),
+                )
+            )
+
+    def _terminal_result(
+        self, job_id: str, summary: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        result = dict(summary or self.summary(self.require(job_id)))
+        result.update(
+            self.logs(
+                job_id,
+                self.settings.log_tail_lines,
+                self.settings.max_return_bytes,
+            )
+        )
+        result["artifacts"] = self.artifacts(self.require(job_id))
+        parsed = [
+            item.get("content")
+            for item in result["artifacts"]
+            if "content" in item
+        ]
+        if len(parsed) == 1:
+            result["parsed_results"] = parsed[0]
+        return result
 
     def cancel(self, job_id: str, grace_seconds: float) -> dict[str, Any]:
         job = self.require(job_id)
@@ -480,6 +625,26 @@ def _submission_fingerprint(**values: Any) -> str:
     except (TypeError, ValueError) as exc:
         raise AwaitlessError(f"submission parameters are not JSON serializable: {exc}") from exc
     return hashlib.sha256(payload).hexdigest()
+
+
+def _format_completion_cursor(event_id: int) -> str:
+    if event_id < 0:
+        raise ValueError("completion event ID must be non-negative")
+    return f"cmp_{event_id:016d}"
+
+
+def _parse_completion_cursor(value: str | None) -> int:
+    if value is None:
+        return 0
+    match = COMPLETION_CURSOR.fullmatch(value)
+    if not match:
+        raise AwaitlessError(
+            "completion cursor must use the form cmp_<decimal-event-id>"
+        )
+    event_id = int(match.group(1))
+    if event_id > MAX_COMPLETION_EVENT_ID:
+        raise AwaitlessError("completion cursor event ID is out of range")
+    return event_id
 
 
 def _tail_file(path: Path, lines: int, max_bytes: int) -> tuple[str, bool]:

@@ -90,10 +90,20 @@ def main() -> int:
         if submitted.get("state") not in {"running", "succeeded"}:
             raise RuntimeError(f"submit returned an invalid state: {submitted}")
 
-        completed = run(
-            [str(executable), "wait", submitted["job_id"], "--json"],
+        completion_feed = run(
+            [
+                str(executable),
+                "completions",
+                submitted["job_id"],
+                "--json",
+            ],
             env=environment,
         )
+        if len(completion_feed.get("completions", [])) != 1:
+            raise RuntimeError(
+                f"installed-wheel completion was not delivered: {completion_feed}"
+            )
+        completed = completion_feed["completions"][0]["result"]
         expected = (
             completed.get("state"),
             completed.get("exit_code"),
@@ -117,7 +127,10 @@ def main() -> int:
             ],
             env=environment,
         )
-        if demo.get("recovered_by_new_client") is not True:
+        if (
+            demo.get("recovered_by_new_client") is not True
+            or demo.get("completion_count") != 2
+        ):
             raise RuntimeError(f"installed-wheel recovery demo failed: {demo}")
 
     print(json.dumps({"ok": True, "version": version}, separators=(",", ":")))

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 — 2026-08-12
+
+- Add a durable multi-job completion feed backed by transactional terminal state
+  events, with opaque monotonic cursors, deterministic replay, pagination, and
+  at-least-once result delivery.
+- Add `awaitless completions` and the `wait_for_completions` MCP tool. Both can
+  block for the next available result, return already-finished work immediately,
+  and preserve every managed job when the client wait times out or disconnects.
+- Return bounded logs, exit status, timing, and declared JSON Artifacts in each
+  completion while preserving the existing single-job `wait` and MCP Tasks
+  contracts.
+- Retry transient SSH/Slurm result-delivery failures without advancing the
+  cursor, and expose unreachable jobs, active jobs, and `has_more` explicitly.
+- Migrate v0.4 databases in place by deduplicating or backfilling terminal events
+  and enforcing exactly one durable completion source per terminal job.
+- Upgrade the built-in recovery demo and installed-wheel smoke test to prove two
+  jobs survive a killed completion waiter and are consumed from new clients.
+- Reposition Awaitless as the durable execution layer for coding agents and
+  update the bundled Agent Skill for multi-job continuation workflows.
+
 ## 0.4.0 — 2026-08-11
 
 - Add durable named FIFO queues for local and SSH jobs with fixed concurrency,

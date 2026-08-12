@@ -96,10 +96,12 @@ def _submit_task(arguments: RunJobArguments) -> dict[str, Any]:
 server = MCPServer(
     name="awaitless",
     title="Awaitless",
-    description="Durable queued MCP Tasks on infrastructure you already own — local, SSH, and Slurm",
+    description="Durable execution and completion feeds for coding agents across local, SSH, and Slurm",
     instructions=(
         "For MCP Tasks clients, call run_job with a stable client_request_id and retain "
         "the returned taskId. Other clients can use submit_job plus wait_for_job. "
+        "For multiple independent jobs, use wait_for_completions and advance its "
+        "durable cursor only after processing each batch. "
         "A client disconnect never cancels the submitted job. Use a preconfigured "
         "named queue when work must wait for scarce local or SSH capacity."
     ),
@@ -199,6 +201,29 @@ def wait_for_job(job_id: str, timeout_seconds: float | None = None) -> dict[str,
     with _service() as service:
         result, _ = service.wait(job_id, timeout_seconds)
         return result
+
+
+@server.tool()
+def wait_for_completions(
+    job_ids: list[str],
+    after_cursor: str | None = None,
+    timeout_seconds: float | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Return durable terminal results across multiple jobs after a cursor.
+
+    Existing completions return immediately. Otherwise the call waits until at
+    least one selected job completes or the optional call-level timeout expires.
+    Reusing the same cursor replays results; advancing to next_cursor consumes
+    the returned batch. A timeout never cancels a managed job.
+    """
+    with _service() as service:
+        return service.completions(
+            job_ids,
+            after_cursor=after_cursor,
+            wait_timeout=timeout_seconds,
+            limit=limit,
+        )
 
 
 @server.tool()

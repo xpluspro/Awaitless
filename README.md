@@ -6,12 +6,17 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**Stop polling long-running jobs and scarce resources from your coding agent.**
+**Durable execution for coding agents.**
 
-Awaitless turns local, SSH, and Slurm commands into durable tasks: submit once,
-disconnect, and collect the exit code, bounded logs, and JSON results later. Named
-queues can also wait until local or SSH capacity is available before starting.
-Your workload stays on infrastructure you already own.
+Submit long-running work once. Awaitless handles queues, scarce resources,
+disconnects, and results across local, SSH, and Slurm. Your workload stays on
+infrastructure you already own.
+
+> **Agents submit work. Awaitless owns execution.**
+
+Awaitless is the durable execution layer between coding agents and the compute
+they use. It gives agents one stable job contract while reusing your local
+machine, SSH hosts, and Slurm clusters underneath.
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) ·
 [Benchmarks](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
@@ -37,10 +42,13 @@ Read the [full Agent report](metric/results/deepseek-agent-v2-report.md), the
 
 ![Awaitless SSH submit, disconnect, resume, and Artifact demo](https://raw.githubusercontent.com/xpluspro/Awaitless/main/assets/awaitless-demo.gif)
 
-## The polling loop you can delete
+## Your coding agent should write code, not babysit jobs
 
-Without Awaitless, an agent starts a job and repeatedly pulls the same growing
-log back into its context:
+An agent can write its own `run → sleep → check` loop. The harder problem is
+making job identity, disconnect recovery, resource admission, cancellation, and
+result delivery reliable across long workloads and changing sessions. Without
+that execution layer, the agent repeatedly pulls the same growing log back into
+its context:
 
 ```bash
 ssh gpu 'run_benchmark > job.log 2>&1 &'
@@ -48,7 +56,8 @@ ssh gpu 'tail -n 200 job.log'  # again...
 ssh gpu 'tail -n 200 job.log'  # and again...
 ```
 
-With Awaitless, it submits once and waits once:
+Awaitless turns that lifecycle into one durable submission and one result
+boundary:
 
 ```bash
 awaitless submit --json --host gpu --artifact results.json -- ./run_benchmark
@@ -78,6 +87,30 @@ when capacity becomes available. There is no priority or preemption: Awaitless
 uses fixed concurrency and FIFO admission, and never kills running work to make
 room for a later job.
 
+## Consume whichever job finishes next
+
+Submit independent work up front, keep every Job ID, then wait at one durable
+completion boundary:
+
+```bash
+awaitless completions job_A job_B job_C --json
+# {"completions":[...],"next_cursor":"cmp_...","active_job_ids":[...]}
+
+awaitless completions job_A job_B job_C --after cmp_... --json
+```
+
+The first call returns already-finished work immediately or blocks until at
+least one selected Job completes. Process the batch before advancing to
+`next_cursor`; reusing an older cursor safely replays the same completion IDs.
+If the client disappears, a new session can continue from the saved cursor.
+Awaitless makes continuation results durably available—it does not run the
+agent's next reasoning step or require a resident notification service.
+
+In the checked-in deterministic three-Job protocol case, per-Job polling and
+retrieval used 13 Agent-visible CLI calls while the completion feed used 6. It
+is a protocol benchmark, not a model or token claim. See the
+[method and raw result](benchmarks/README.md#multi-job-completion-benchmark).
+
 ## Try the recovery story in 30 seconds
 
 Linux, Python 3.10+, and Bash are required. Run the built-in demo without a
@@ -87,8 +120,8 @@ persistent install:
 uvx --from awaitless-runner awaitless demo --json
 ```
 
-The demo submits a local job, terminates its first waiting client, reconnects
-from a new client using only the job ID, and verifies a JSON Artifact.
+The demo submits two local jobs, terminates their first completion waiter, then
+uses new clients to consume both bounded results and JSON Artifacts by cursor.
 
 For regular CLI use:
 
@@ -118,7 +151,8 @@ your client):
 Then ask the agent to run a long command with Awaitless. Tasks-aware clients
 receive a durable MCP Task handle immediately; other clients use `submit_job`
 followed by `wait_for_job`. Retrying an expensive submission with the same
-`client_request_id` cannot launch a duplicate job.
+`client_request_id` cannot launch a duplicate job. For parallel work, every
+client can use `wait_for_completions` regardless of MCP Tasks support.
 
 For direct CLI use, the whole loop is:
 
@@ -164,7 +198,8 @@ flowchart LR
     D --> S["SSH host"]
     D --> H["Slurm allocation"]
     A -. "reconnect with stable ID" .-> C
-    C -->|"state + exit code + bounded logs + Artifacts"| A
+    C --> E["Durable completion cursor"]
+    E -->|"state + exit code + bounded logs + Artifacts"| A
 ```
 
 There is no Awaitless daemon, HTTP service, or hosted sandbox. Each invocation
@@ -175,6 +210,8 @@ tails enter the agent context.
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [Product positioning and evolution principles](docs/PRD.zh-CN.md)
+- [v0.5 durable completion feed](docs/v0.5.zh-CN.md)
 - [CLI, configuration, SSH, Slurm, persistence, Artifacts, and troubleshooting](docs/REFERENCE.md)
 - [MCP Tasks protocol and compatibility](docs/MCP_TASKS.md)
 - [Benchmark definitions, methodology, and interpretation](metric/README.md)

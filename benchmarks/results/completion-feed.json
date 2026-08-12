@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-12T14:10:23.632557Z",
+  "measurement_scope": {
+    "calls": "separate agent-visible Awaitless CLI invocations",
+    "claim_boundary": "deterministic protocol benchmark; no model tokens or reasoning quality are measured"
+  },
+  "environment": {
+    "backend": "local",
+    "workload": "sleep-only jobs with small JSON Artifacts",
+    "durations_seconds": [
+      0.4,
+      0.7,
+      1.0
+    ],
+    "poll_interval_seconds": 0.1
+  },
+  "per_job_polling": {
+    "submit_calls": 3,
+    "status_calls": 7,
+    "result_calls": 3,
+    "total_agent_visible_calls": 13,
+    "wall_seconds": 4.669,
+    "states": [
+      "succeeded",
+      "succeeded",
+      "succeeded"
+    ],
+    "parsed_results": [
+      {
+        "correctness": true,
+        "label": "job-1"
+      },
+      {
+        "correctness": true,
+        "label": "job-2"
+      },
+      {
+        "correctness": true,
+        "label": "job-3"
+      }
+    ]
+  },
+  "completion_feed": {
+    "submit_calls": 3,
+    "completion_calls": 3,
+    "total_agent_visible_calls": 6,
+    "wall_seconds": 4.572,
+    "completion_ids": [
+      "cmp_0000000000000005",
+      "cmp_0000000000000008",
+      "cmp_0000000000000009"
+    ],
+    "states": [
+      "succeeded",
+      "succeeded",
+      "succeeded"
+    ],
+    "parsed_results": [
+      {
+        "correctness": true,
+        "label": "job-1"
+      },
+      {
+        "correctness": true,
+        "label": "job-2"
+      },
+      {
+        "correctness": true,
+        "label": "job-3"
+      }
+    ],
+    "final_cursor": "cmp_0000000000000009"
+  },
+  "comparison": {
+    "agent_visible_calls_saved": 7,
+    "agent_visible_call_reduction_percent": 53.8
+  }
+}

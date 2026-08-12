@@ -17,12 +17,15 @@ and implementation details.
   checked-in 20-case comparison behind the README headline numbers.
 - [SSH polling experiment](../benchmarks/README.md) — method and raw-result link
   for the 13-to-2 agent-visible call comparison.
+- [Multi-Job completion benchmark](../benchmarks/README.md#multi-job-completion-benchmark)
+  — deterministic v0.5 protocol case and raw-result link.
 
 ## Product and design records
 
+- [Product positioning and evolution principles](PRD.zh-CN.md)
+- [v0.5 durable completion feed](v0.5.zh-CN.md)
 - [v0.4 queue release and real-machine acceptance](v0.4.zh-CN.md)
 - [v0.2 Agent and Slurm acceptance contract](v0.2.zh-CN.md)
-- [Original product requirements](PRD.zh-CN.md)
 - [Blocking vs. Awaitless benchmark design](../metric/LONG_RUNNING.md)
 - [Metrics](../metric/METRICS.md) and [experiment protocol](../metric/PROTOCOL.md)
 

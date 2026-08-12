@@ -82,6 +82,7 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                         "submit_job",
                         "run_job",
                         "wait_for_job",
+                        "wait_for_completions",
                         "get_job_status",
                         "get_job_logs",
                         "cancel_job",
@@ -147,6 +148,71 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
             {"job_id": cancellable["job_id"], "grace_seconds": 0.05},
         )
         self.assertEqual(cancelled["state"], "cancelled")
+
+    async def test_completion_feed_survives_stdio_disconnects(self) -> None:
+        assert stdio_client is not None
+        assert ClientSession is not None
+        job_ids: list[str] = []
+        async with stdio_client(self.parameters) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                for label, delay in (("alpha", 0.15), ("beta", 0.25)):
+                    source = (
+                        "from pathlib import Path; import json,time; "
+                        f"time.sleep({delay}); "
+                        f"Path('{label}.json').write_text(json.dumps({{'label': {label!r}}})); "
+                        f"print({label!r})"
+                    )
+                    submitted = await session.call_tool(
+                        "submit_job",
+                        {
+                            "command": [sys.executable, "-c", source],
+                            "cwd": str(self.work),
+                            "artifacts": [f"{label}.json"],
+                        },
+                    )
+                    self.assertFalse(submitted.is_error, submitted.content)
+                    job_ids.append(submitted.structured_content["job_id"])
+
+        cursor: str | None = None
+        recovered: list[dict[str, Any]] = []
+        while True:
+            arguments: dict[str, Any] = {
+                "job_ids": job_ids,
+                "timeout_seconds": 5,
+                "limit": 1,
+            }
+            if cursor is not None:
+                arguments["after_cursor"] = cursor
+            batch = await asyncio.wait_for(
+                self.call("wait_for_completions", arguments), timeout=15
+            )
+            recovered.extend(batch["completions"])
+            cursor = batch["next_cursor"]
+            if not batch["active_job_ids"] and not batch["has_more"]:
+                break
+
+        self.assertEqual({item["job_id"] for item in recovered}, set(job_ids))
+        self.assertEqual(len({item["completion_id"] for item in recovered}), 2)
+        self.assertEqual(
+            {item["result"]["parsed_results"]["label"] for item in recovered},
+            {"alpha", "beta"},
+        )
+        replay = await self.call(
+            "wait_for_completions",
+            {"job_ids": job_ids, "timeout_seconds": 0, "limit": 50},
+        )
+        self.assertEqual(len(replay["completions"]), 2)
+        drained = await self.call(
+            "wait_for_completions",
+            {
+                "job_ids": job_ids,
+                "after_cursor": cursor,
+                "timeout_seconds": 0,
+            },
+        )
+        self.assertEqual(drained["completions"], [])
+        self.assertFalse(drained["wait_timed_out"])
 
     async def test_tasks_extension_disconnect_replay_and_inline_result(self) -> None:
         assert Client is not None

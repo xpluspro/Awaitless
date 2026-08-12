@@ -1,7 +1,7 @@
 # Awaitless reference guide
 
 This guide contains the technical detail intentionally kept out of the project
-README. It describes Awaitless 0.3.x as shipped by the `awaitless-runner`
+README. It describes Awaitless 0.5.x as shipped by the `awaitless-runner`
 distribution.
 
 ## Requirements and installation
@@ -49,8 +49,10 @@ Backend behavior:
 - **Slurm:** Awaitless submits a batch script to `sbatch`, persists the scheduler
   ID, and uses Slurm queue/accounting data as the workload control plane.
 
-SQLite uses WAL. Active-to-terminal state transitions are transactional so
-completion, cancellation, and stall detection cannot overwrite each other.
+SQLite uses WAL. Active-to-terminal state transitions and their terminal events
+are transactional so completion, cancellation, and stall detection cannot
+overwrite each other. Each terminal Job owns one durable completion event; its
+monotonic event ID is exposed as an opaque replay cursor.
 
 ## Configuration
 
@@ -90,6 +92,7 @@ Commands:
 |---|---|
 | `submit` | Create a durable local, SSH, or Slurm job and return before it finishes. |
 | `wait` | Block until a job is terminal or the client-side wait timeout expires. |
+| `completions` | Wait for and replay bounded terminal results across selected jobs. |
 | `status` | Reconcile and return the current state. |
 | `logs` | Return bounded stdout and stderr tails. |
 | `cancel` | Persist cancellation intent and stop the managed process group or scheduler job. |
@@ -98,13 +101,14 @@ Commands:
 | `queue list` | List queues and their queued, active, and total job counts. |
 | `inspect` | Return job metadata and state history. |
 | `doctor` | Check local and configured SSH prerequisites. |
-| `demo` | Exercise submit, waiter interruption, reconnect, and JSON Artifact recovery locally. |
+| `demo` | Kill a completion waiter, then recover two Job results from new clients. |
 
 Common operations:
 
 ```bash
 awaitless submit --json --name build -- ninja -C build
 awaitless wait <job-id> --json
+awaitless completions <job-a> <job-b> --json
 awaitless status <job-id> --json
 awaitless logs <job-id> --tail 200 --json
 awaitless cancel <job-id> --grace-period 5s --json
@@ -151,6 +155,53 @@ or MCP response from launching a second GPU or Slurm job.
 
 `wait --timeout` limits only how long that client waits. `submit --timeout`
 limits the managed job runtime.
+
+## Durable completion feed
+
+`wait` remains the shortest path for one Job. For multiple independent Jobs,
+submit all work first and consume terminal results through one cursor:
+
+```bash
+awaitless completions job_A job_B job_C --json
+awaitless completions job_A job_B job_C \
+  --after cmp_0000000000000042 --json
+```
+
+The command requires 1–500 explicit Job IDs. It first reconciles only the
+selected active Jobs. If a completion already exists after the cursor, it
+returns immediately; otherwise it blocks until at least one selected Job
+becomes terminal. `--timeout 0` performs a non-blocking read, while a positive
+duration bounds only the current client wait.
+
+Each completion contains:
+
+- an opaque, monotonic `completion_id`;
+- Job ID, terminal state, backend `finished_at`, and local `observed_at`;
+- the ordinary bounded terminal result: status, exit code, timing, log tails,
+  truncation marker, declared Artifacts, and optional `parsed_results`.
+
+The envelope also returns `next_cursor`, `active_job_ids`,
+`unreachable_job_ids`, `has_more`, and `wait_timed_out`. `limit` accepts 1–500
+and defaults to 50. When `has_more` is true, read another page after
+`next_cursor` even if no Job remains active.
+
+The CLI and MCP tool share the checked-in
+[completion feed JSON Schema](schemas/completion-feed.schema.json).
+
+Delivery is at-least-once. Process a batch before persisting `next_cursor`.
+Reusing the old cursor deterministically replays the same completion IDs and
+order, so clients can deduplicate after a lost response. Do not change the Job
+selection in the middle of one cursor flow.
+
+Awaitless never advances past a terminal SSH or Slurm result it cannot retrieve.
+It retries inside a blocking call; a bounded timeout returns the affected IDs in
+`unreachable_job_ids`, keeps `next_cursor` unchanged, and leaves every Job
+untouched. A fully terminal, drained selection returns immediately without
+marking a timeout.
+
+The feed does not acknowledge or delete results, execute callbacks, or wake an
+Agent process that has exited. It provides a durable continuation primitive for
+CLI, MCP, and future host adapters.
 
 ## Named concurrency queues
 
@@ -370,11 +421,13 @@ isolated `/path/to/logs/<job-id>/` directory for each job.
 
 ## MCP tools and protocol
 
-Awaitless exposes `run_job`, `submit_job`, `wait_for_job`, `get_job_status`,
-`get_job_logs`, `cancel_job`, `list_jobs`, `create_queue`, and `list_queues` over
-stdio. `run_job` and `submit_job` accept an optional `queue`. Tasks-aware clients
-can receive a durable Task handle and use `tasks/get`, `tasks/cancel`, and
-`tasks/update`.
+Awaitless exposes `run_job`, `submit_job`, `wait_for_job`,
+`wait_for_completions`, `get_job_status`, `get_job_logs`, `cancel_job`,
+`list_jobs`, `create_queue`, and `list_queues` over stdio. `run_job` and
+`submit_job` accept an optional `queue`. Tasks-aware clients can receive a
+durable Task handle and use `tasks/get`, `tasks/cancel`, and `tasks/update`.
+`wait_for_completions` is an ordinary MCP tool available with or without Tasks
+support; its JSON contract matches the CLI completion envelope.
 
 See [MCP Tasks protocol](MCP_TASKS.md) for discovery, capability negotiation,
 wire shapes, TTL behavior, state mapping, and legacy-client migration.
@@ -429,6 +482,7 @@ in the benchmark documentation:
 - [DeepSeek Agent report](../metric/results/deepseek-agent-v2-report.md)
 - [SSH polling experiment](../benchmarks/README.md)
 - [SSH polling raw result](../benchmarks/results/polling-vs-awaitless.json)
+- [Multi-Job completion protocol result](../benchmarks/results/completion-feed.json)
 - [Blocking vs. Awaitless design](../metric/LONG_RUNNING.md)
 
 Returned log bytes are not token estimates. Agent usage-token claims are made
@@ -450,7 +504,8 @@ idempotent submission, persistence, bounded context, typed results, and
 recovery semantics.
 
 The product decisions and acceptance history are recorded in
-[the v0.2 contract](v0.2.zh-CN.md) and [the original PRD](PRD.zh-CN.md).
+[the product positioning](PRD.zh-CN.md), [the v0.5 completion release](v0.5.zh-CN.md),
+and [the v0.2 contract](v0.2.zh-CN.md).
 
 ## Development
 

@@ -1,6 +1,6 @@
 # MCP Tasks compatibility
 
-Awaitless 0.3 implements the `io.modelcontextprotocol/tasks` extension described
+Awaitless 0.5 implements the `io.modelcontextprotocol/tasks` extension described
 by the MCP Tasks specification dated 2026-07-28. It uses the MCP Python SDK 2.x
 extension API; it does not depend on the removed SDK 1.x experimental Tasks API.
 
@@ -10,8 +10,8 @@ there is no second lifecycle database and no in-memory handle that disappears
 with the stdio process.
 
 The extension is still evolving. Awaitless keeps `submit_job`, `wait_for_job`,
-`get_job_status`, `get_job_logs`, `cancel_job`, and `list_jobs` available while
-the ecosystem migrates.
+`wait_for_completions`, `get_job_status`, `get_job_logs`, `cancel_job`, and
+`list_jobs` available while the ecosystem migrates.
 
 ## Negotiation
 
@@ -134,6 +134,31 @@ scheduler ID with `scancel`. `tasks/update` validates the task and acknowledges
 unknown or already-satisfied input keys. Awaitless command jobs never enter
 `input_required`.
 
+## Multi-Job completion feed
+
+MCP Tasks are durable single-Job handles. Awaitless 0.5 additionally exposes the
+ordinary `wait_for_completions` tool for clients that submit several independent
+Jobs and need whichever bounded result becomes available next:
+
+```json
+{
+  "job_ids": ["job_019F_A", "job_019F_B"],
+  "after_cursor": "cmp_0000000000000042",
+  "timeout_seconds": 600,
+  "limit": 50
+}
+```
+
+The tool works whether or not the client negotiated MCP Tasks. Completion IDs
+are persistent and at-least-once: process the returned batch, save
+`next_cursor`, and reuse the prior cursor after a lost response. A call timeout
+never cancels a Job. Awaitless does not advance past an unreachable SSH or Slurm
+result; the response exposes `unreachable_job_ids` and keeps the cursor stable.
+
+This feed avoids a client-driven `tasks/get` loop across many handles. It is not
+a new MCP push capability and does not wake a client process that is no longer
+running.
+
 ## Status mapping
 
 | Awaitless state | MCP Task status | Notes |
@@ -172,10 +197,10 @@ Run this without an SSH host or Slurm installation:
 awaitless demo --json
 ```
 
-The command starts a local durable job and a separate `awaitless wait` process,
-terminates that first waiter, starts a new waiter with the saved job ID, and
-verifies the bounded logs and JSON Artifact. The output includes both client
-phases, the durable job ID, the recovered state, and
+The command starts two local durable Jobs and a separate completion waiter,
+terminates that first client, then consumes both bounded results and JSON
+Artifacts from new CLI processes using a durable cursor. The output includes
+both Job IDs, both completions, `completion_count: 2`, and
 `recovered_by_new_client: true`.
 
 ## Protocol verification
@@ -187,7 +212,8 @@ phases, the durable job ID, the recovered state, and
 - disconnect, new client, retry, and stable task ID;
 - inline final result and JSON Artifact recovery;
 - blocking fallback for clients without the extension;
-- `tasks/cancel`, status mapping, and TTL expiry.
+- `tasks/cancel`, status mapping, and TTL expiry;
+- multi-Job completion replay across fresh stdio clients.
 
 `tests/test_db.py` separately races independent SQLite connections to verify
 that one and only one caller owns an idempotent submission.

@@ -9,6 +9,9 @@ from .constants import TERMINAL_STATES
 from .util import utc_now
 
 
+TERMINAL_STATE_VALUES = tuple(sorted(TERMINAL_STATES))
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS queues (
     name TEXT PRIMARY KEY,
@@ -99,6 +102,71 @@ class Store:
             "CREATE UNIQUE INDEX IF NOT EXISTS jobs_client_request_id_idx "
             "ON jobs(client_request_id) WHERE client_request_id IS NOT NULL"
         )
+        completion_index = self.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='state_events_terminal_job_idx'"
+        ).fetchone()
+        if not completion_index:
+            self._migrate_completions()
+
+    def _migrate_completions(self) -> None:
+        """Make terminal state events a durable, unique completion feed."""
+        placeholders = ",".join("?" for _ in TERMINAL_STATE_VALUES)
+        terminal_literals = ",".join(
+            "'" + state.replace("'", "''") + "'" for state in TERMINAL_STATE_VALUES
+        )
+        observed_at = utc_now()
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            # Earlier versions already wrote state events transactionally, but did
+            # not enforce one terminal event per job. Keep the earliest event that
+            # agrees with the durable job state and discard impossible history.
+            self.connection.execute(
+                f"""
+                DELETE FROM state_events
+                 WHERE state IN ({placeholders})
+                   AND id NOT IN (
+                       SELECT MIN(se.id)
+                         FROM state_events AS se
+                         JOIN jobs AS j ON j.job_id=se.job_id
+                        WHERE j.state IN ({placeholders})
+                          AND se.state=j.state
+                        GROUP BY se.job_id
+                   )
+                """,
+                (*TERMINAL_STATE_VALUES, *TERMINAL_STATE_VALUES),
+            )
+            # Backfill terminal rows written by snapshots that predated complete
+            # state-event coverage. ``finished_at`` remains the actual backend
+            # timestamp; this event timestamp is when the completion was observed.
+            self.connection.execute(
+                f"""
+                INSERT INTO state_events(job_id,state,occurred_at,detail)
+                SELECT j.job_id,j.state,?,j.error
+                  FROM jobs AS j
+                 WHERE j.state IN ({placeholders})
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM state_events AS se
+                        WHERE se.job_id=j.job_id
+                          AND se.state IN ({placeholders})
+                   )
+                 ORDER BY j.finished_at,j.job_id
+                """,
+                (observed_at, *TERMINAL_STATE_VALUES, *TERMINAL_STATE_VALUES),
+            )
+            self.connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS state_events_terminal_job_idx "
+                f"ON state_events(job_id) WHERE state IN ({terminal_literals})"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS state_events_completion_idx "
+                f"ON state_events(id,job_id) WHERE state IN ({terminal_literals})"
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def close(self) -> None:
         self.connection.close()
@@ -426,6 +494,15 @@ class Store:
             if active_only and previous["state"] in TERMINAL_STATES:
                 self.connection.commit()
                 return previous
+            if (
+                previous["state"] in TERMINAL_STATES
+                and "state" in values
+                and values["state"] != previous["state"]
+            ):
+                raise ValueError(
+                    f"terminal job {job_id!r} cannot transition from "
+                    f"{previous['state']!r} to {values['state']!r}"
+                )
             self.connection.execute(
                 f"UPDATE jobs SET {assignments} WHERE job_id=?", (*values.values(), job_id)
             )
@@ -476,6 +553,40 @@ class Store:
     def events(self, job_id: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             "SELECT state,occurred_at,detail FROM state_events WHERE job_id=? ORDER BY id", (job_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def max_event_id(self) -> int:
+        return int(
+            self.connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM state_events"
+            ).fetchone()[0]
+        )
+
+    def completion_events(
+        self, job_ids: list[str], *, after_id: int, limit: int
+    ) -> list[dict[str, Any]]:
+        if not job_ids:
+            return []
+        if after_id < 0:
+            raise ValueError("after_id must be non-negative")
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        state_placeholders = ",".join("?" for _ in TERMINAL_STATE_VALUES)
+        job_placeholders = ",".join("?" for _ in job_ids)
+        rows = self.connection.execute(
+            f"""
+            SELECT se.id,se.job_id,se.state,se.occurred_at AS observed_at,
+                   j.finished_at
+              FROM state_events AS se
+              JOIN jobs AS j ON j.job_id=se.job_id
+             WHERE se.id>?
+               AND se.state IN ({state_placeholders})
+               AND se.job_id IN ({job_placeholders})
+             ORDER BY se.id
+             LIMIT ?
+            """,
+            (after_id, *TERMINAL_STATE_VALUES, *job_ids, limit),
         ).fetchall()
         return [dict(row) for row in rows]
 
