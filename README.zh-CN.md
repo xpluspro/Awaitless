@@ -4,14 +4,14 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**面向 Coding Agents 的持久化执行层。**
+**面向 Coding Agents 的自适应持久化执行层。**
 
-长任务只需提交一次。Awaitless 负责 Local、SSH 和 Slurm 上的排队、稀缺资源、断线与
-结果交付；工作负载始终运行在你自己的基础设施上。
+命令只走一个执行入口：短任务 inline 返回，较长或 queued 的任务自动变成 Local、SSH
+和 Slurm 上的持久 Job。工作负载始终运行在你自己的基础设施上。
 
 > **Agents submit work. Awaitless owns execution.**
 
-Awaitless 位于 Coding Agent 与计算资源之间，对上提供一套稳定的 Job 契约，对下复用你
+Awaitless 位于 Coding Agent 与计算资源之间，对上提供一套自适应、稳定的 Job 契约，对下复用你
 已有的本地机器、SSH 主机与 Slurm 集群。
 
 [English](README.md) · [完整文档](docs/README.md) ·
@@ -49,18 +49,20 @@ ssh gpu 'tail -n 200 job.log'  # 再查一次……
 ssh gpu 'tail -n 200 job.log'  # 再查一次……
 ```
 
-Awaitless 把这段生命周期收敛为一次持久提交和一个结果边界：
+Awaitless 把这段生命周期收敛为一次自适应执行调用和一个结果边界：
 
 ```bash
-awaitless submit --json --host gpu --artifact results.json -- ./run_benchmark
-# {"job_id":"job_019F...","state":"running","backend":"ssh"}
+awaitless run --json --host gpu --artifact results.json -- ./run_benchmark
+# 快速完成：{"state":"succeeded","delivery":"inline","exit_code":0,...}
+# 继续运行：{"job_id":"job_019F...","state":"running","delivery":"detached",...}
 
 awaitless wait job_019F... --json
 # {"state":"succeeded","exit_code":0,"parsed_results":{...}}
 ```
 
-中断 waiter、关闭 MCP 客户端或换一个全新的 Agent 会话都不会停止任务。只凭稳定
-job ID 就能恢复结果。
+每次 `run` 都会先创建 durable Job。inline window 内完成时像普通命令一样返回；超过窗口
+只会 detach waiter。中断 waiter、关闭 MCP 客户端或换一个全新的 Agent 会话都不会停止
+任务，只凭稳定 job ID 就能恢复结果。
 
 ## 资源还没空闲，也可以现在提交
 
@@ -76,6 +78,16 @@ awaitless submit --queue gpu0 -- python train_c.py
 
 第一条命令运行，其余任务显示 `queued`；容量释放后，下一个任务会自动启动。第一版没有
 priority 和抢占，只有固定并发与 FIFO admission，也绝不会为了后来的任务杀掉正在运行的工作。
+
+Operator 还可以在全局或 host 配置中绑定默认 queue：
+
+```toml
+[hosts.gpu]
+hostname = "gpu.example.com"
+queue = "gpu0"
+```
+
+之后 Agent 调用 `run` 时不需要选择 queue，也不需要先探测 GPU 是否空闲。
 
 ## 哪个任务先完成，就先消费哪个结果
 
@@ -132,16 +144,17 @@ awaitless doctor --json
 }
 ```
 
-然后让 Agent 用 Awaitless 执行长命令即可。支持 MCP Tasks 的客户端会立即获得持久
-Task handle；其他客户端使用 `submit_job`，之后调用 `wait_for_job`。昂贵任务使用相同
+首选的 `run` Tool 会 inline 返回快速命令，并自动为较长或 queued 的命令返回 durable
+handle。支持 MCP Tasks 的客户端仍可使用 `run_job`，低层客户端继续使用 `submit_job`
+和 `wait_for_job`。昂贵任务使用相同
 `client_request_id` 重试时不会重复启动。并行任务可以通过 `wait_for_completions` 统一消费，
 无论客户端是否支持 MCP Tasks。
 
 直接使用 CLI 的完整流程只有两步：
 
 ```bash
-awaitless submit --json --name tests -- python -m pytest -q
-# 保存返回的 job_id，然后：
+awaitless run --json --name tests -- python -m pytest -q
+# 如果 delivery 是 detached，保存返回的 job_id，然后：
 awaitless wait <job-id> --json
 ```
 
@@ -159,7 +172,7 @@ awaitless wait <job-id> --json
 
 | 工具 | 最适合 | Agent 仍需自己补的能力 |
 |---|---|---|
-| 同步阻塞 shell | 短命令 | 无——不需要断线恢复和释放工具槽时就应该直接用它。 |
+| 同步阻塞 shell | 快速观察和交互任务 | 工程命令运行时间超出预期后的生命周期管理。 |
 | Shell 轮询 / `nohup` | 让一个简单命令留在后台 | ID、状态、退出码恢复、有限日志、取消、去重与结果解析。 |
 | `tmux` | 人类 detach/attach 交互式 shell、REPL 和 TUI | 一套可靠的非交互任务协议与 wrapper glue。 |
 | **Awaitless** | Agent 发起的构建、测试、benchmark、远程任务与集群任务 | 只需提供命令，以及可选的 JSON Artifact。 |
@@ -171,13 +184,18 @@ Awaitless 不替代交互终端，也不替代 Slurm。它为 Coding Agent 提�
 
 ```mermaid
 flowchart LR
-    A["Coding Agent"] -->|"提交一次"| B["Awaitless MCP / CLI"]
+    A["Coding Agent"] -->|"run"| B["Awaitless MCP / CLI"]
     B --> C[("SQLite 任务记录")]
-    B --> Q{"命名队列？"}
+    C --> Q["可选队列准入"]
     Q -->|"容量可用"| D{"Backend"}
     D --> L["本地进程"]
     D --> S["SSH 主机"]
     D --> H["Slurm allocation"]
+    L --> I{"inline 内完成？"}
+    S --> I
+    H --> I
+    I -->|"是：返回结果"| A
+    I -->|"否：返回 durable handle"| A
     A -. "凭稳定 ID 重连" .-> C
     C --> E["持久 completion cursor"]
     E -->|"状态 + 退出码 + 有限日志 + Artifact"| A
@@ -191,6 +209,8 @@ Awaitless 没有 daemon、HTTP 服务或托管 sandbox。每次调用打开同�
 
 - [文档索引](docs/README.md)
 - [产品定位与演进原则](docs/PRD.zh-CN.md)
+- [v0.6 Adaptive Run 实现说明](docs/v0.6.zh-CN.md)
+- [v0.7 Immutable Completion Snapshots 计划](docs/v0.7.zh-CN.md)
 - [v0.5 Durable Completion Feed 实现说明](docs/v0.5.zh-CN.md)
 - [CLI、配置、SSH、Slurm、持久化、Artifact 与故障排查](docs/REFERENCE.md)
 - [MCP Tasks 协议与兼容性](docs/MCP_TASKS.md)

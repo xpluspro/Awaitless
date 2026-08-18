@@ -2,11 +2,11 @@
 
 状态：Current
 
-产品基线：v0.5.0
+产品基线：v0.6.0
 
-更新日期：2026-08-12
+更新日期：2026-08-18
 
-> **Awaitless is a durable execution layer for coding agents.**
+> **Awaitless is an adaptive durable execution layer for coding agents.**
 
 Awaitless 让 Claude Code、Codex、OpenCode 等 Coding Agent 只声明“我要执行什么”，
 而不需要在推理循环里持续管理任务何时开始、资源何时空闲、连接是否存活，以及结果何时
@@ -94,6 +94,22 @@ Where did the previous session leave off?
 
 ## 3. 三个核心能力
 
+### 3.0 Adaptive Routing
+
+Agent 不应该先预测一个命令会运行多久，再决定是否创建 durable Job。v0.6 提供统一的
+`run` 入口：所有 workload 从启动时就由 Awaitless 持久管理；短命令在 inline window 内
+完成时直接返回 stdout、stderr 和 exit code，较长或 queued 的命令自动返回 stable Job ID。
+
+```text
+run(command)
+  ├── quick    → inline result
+  ├── longer   → detached durable handle
+  └── queued   → detached durable handle
+```
+
+这消除了 `ssh`、`submit_job`、`status` 和 `logs` 之间最常见的启动路由决策。低层接口继续
+存在，但不是普通非交互工程命令的首选入口。
+
 ### 3.1 Durable Execution
 
 任务必须独立于 Agent session 存活：
@@ -109,7 +125,7 @@ submit
 Agent session 的关闭、waiter 的中断或 stdio MCP server 的重启，都不应自动取消已经提交
 的 workload。昂贵任务的逻辑重试还必须可幂等恢复，避免因为响应丢失而重复启动。
 
-当前状态：v0.5 已在 Local、SSH 和 Slurm 上提供稳定 Job ID、持久状态、取消、有限日志、
+当前状态：v0.6 已在 Local、SSH 和 Slurm 上提供稳定 Job ID、持久状态、取消、有限日志、
 JSON Artifact 和基于 `client_request_id` 的幂等提交。
 
 ### 3.2 Queue & Resource Ownership
@@ -124,11 +140,14 @@ benchmark C    QUEUED
 
 Agent 应该能够立即提交全部工作意图，由 Awaitless 决定任务何时获得执行资格。
 
-当前状态：v0.5 已为 Local 和 SSH 提供持久命名 FIFO 队列、固定并发、非抢占准入和 queued
+当前状态：v0.6 已为 Local 和 SSH 提供持久命名 FIFO 队列、固定并发、非抢占准入和 queued
 job cancellation。Slurm 仍是 Slurm Job 的唯一资源调度器，Awaitless 只统一它的任务状态
 与结果契约。
 
 当前队列不是通用资源调度器。它不提供 priority、抢占、GPU 自动发现、配额或 DAG。
+
+Operator 可以为全局或某个 host 配置默认 queue。adaptive `run` 自动采用该 queue，Agent
+不需要在每次调用时重新选择资源队列；显式资源声明和自动设备发现仍不属于当前版本。
 
 ### 3.3 Event-driven Continuation
 
@@ -158,7 +177,7 @@ reason → submit
 reason ← result
 ```
 
-当前状态：v0.5 已交付第一版持久 completion feed。`awaitless completions` 与
+当前状态：v0.6 继续提供第一版持久 completion feed。`awaitless completions` 与
 `wait_for_completions` 让 Agent 通过可重放 cursor 消费多个 Job 的有界结果；单 Job 的
 `awaitless wait` 和 MCP Tasks 继续保持兼容。宿主级主动唤醒仍需要未来的 Agent adapter，
 不属于底层 completion primitive。
@@ -197,7 +216,8 @@ Awaitless 的直接接口消费者通常是 Agent，但安装、配置资源边�
 共同特征不是“命令一定很慢”，而是任务具有一个或多个执行基础设施需求：需要断线存活、
 等待稀缺资源、限制并发、恢复状态、统一取消、限制返回日志，或在另一个 session 中取回结果。
 
-短暂且无需恢复的同步命令应继续直接执行；需要人类交互的 REPL、TUI 和 Shell 应继续使用 PTY。
+`rg`、`cat`、`git status` 等快速仓库观察可以继续直接执行；非交互 build、test、benchmark
+和远程工程命令应优先走 adaptive `run`。需要人类交互的 REPL、TUI 和 Shell 继续使用 PTY。
 
 ## 6. 上层契约与下层复用
 
@@ -243,7 +263,7 @@ Awaitless **不是**：
 
 | 工具或系统 | 最适合解决的问题 | Awaitless 与它的关系 |
 |---|---|---|
-| 同步 Shell / PTY | 短命令和交互式操作 | 不替代；没有持久化需求时直接使用 |
+| 同步 Shell / PTY | 快速观察和交互式操作 | 不替代；工程 workload 由 adaptive `run` 吸收时长决策 |
 | `nohup` / `tmux` | 人类 detach/attach 和临时后台进程 | 可作为人工工具；不提供统一 Agent Job 契约 |
 | Slurm | 集群资源分配与调度策略 | 复用；Awaitless 是 Agent-facing adapter |
 | Kubernetes | 服务编排与容器控制平面 | 不重建；未来只可能作为 Backend 适配 |
@@ -285,7 +305,7 @@ wait 超时、MCP 断线或 Agent session 关闭都不是取消信号。只有�
 
 ## 9. 当前产品基线
 
-| 能力 | v0.5 状态 | 下一步 |
+| 能力 | v0.6 状态 | 下一步 |
 |---|---|---|
 | Durable Local / SSH / Slurm Jobs | 已交付 | 继续加强故障与升级兼容性 |
 | 稳定 Job ID 与幂等提交 | 已交付 | 作为所有新接口的身份基础 |
@@ -294,6 +314,8 @@ wait 超时、MCP 断线或 Agent session 关闭都不是取消信号。只有�
 | Local / SSH 固定并发 FIFO 队列 | MVP 已交付 | 暂不加入 priority、抢占和 GPU discovery |
 | MCP Tasks | 兼容层已交付 | 不把协议 polling 当作产品最终语义 |
 | 多 Job completion / continuation | 持久 feed 已交付 | 由真实使用决定是否增加宿主 wakeup adapter |
+| Adaptive `run` routing | 已交付 | 以无提醒采用率和误路由率评估默认行为 |
+| Operator default queue routing | 已交付 | 暂不加入自动设备发现和通用资源声明 |
 
 版本演进应围绕三条主线补齐产品契约，而不是以 Backend 数量或 CLI 子命令数量衡量进展。
 
@@ -309,6 +331,8 @@ wait 超时、MCP 断线或 Agent session 关闭都不是取消信号。只有�
 ### Agent 体验
 
 - Agent-visible 的任务管理调用不随任务时长线性增长；
+- 面对 build、test、benchmark 等命令时，Agent 无需先预测时长或选择 submit/wait 协议；
+- 在未被用户提醒的情况下，Agent 优先调用 adaptive `run` 而不是同步阻塞远程 workload；
 - Agent 不需要用重复 `sleep`、`ps`、`tail`、`nvidia-smi` 或 SSH 查询管理生命周期；
 - 大日志不会被重复注入上下文；
 - 多任务完成后，Agent 能从一个稳定入口发现并消费结果。
@@ -316,19 +340,19 @@ wait 超时、MCP 断线或 Agent session 关闭都不是取消信号。只有�
 ### 产品边界
 
 - 用户计算始终留在用户自己的基础设施；
-- 短命令和交互任务不被强行导入 Awaitless；
+- 快速观察和交互任务不被强行导入 Awaitless；
 - Awaitless 不复制 Slurm、Kubernetes 或 Agent framework 的职责。
 
 ## 11. 对外表达
 
 首页 Tagline：
 
-> **Durable execution for coding agents.**
+> **Adaptive durable execution for coding agents.**
 
 副标题：
 
-> Submit long-running work once. Awaitless handles queues, scarce resources,
-> disconnects, and results across local, SSH, and Slurm.
+> Run commands through one execution layer. Quick work returns inline; longer or
+> queued work becomes durable across local, SSH, and Slurm.
 
 更有攻击性的场景标题：
 
@@ -336,7 +360,7 @@ wait 超时、MCP 断线或 Agent session 关闭都不是取消信号。只有�
 
 随后用一句话解释品类：
 
-> Awaitless is the durable execution layer between coding agents and the compute they use.
+> Awaitless is the adaptive durable execution layer between coding agents and the compute they use.
 
 “减少 polling、工具调用和 token”是可测量的结果与证明，不是产品品类本身。
 
@@ -346,3 +370,10 @@ v0.5 让单 Job 的可恢复等待升级为跨 Job 的持久 completion feed，�
 一个可阻塞、可重放、有界的结果入口。详细范围、非目标、里程碑与验收标准见
 [v0.5 发布记录](v0.5.zh-CN.md)。后续是否增加宿主 wakeup adapter、named consumer 或
 声明式依赖，由 v0.5 的真实恢复正确性和 Agent 调用轨迹决定。
+
+## 13. v0.6 交付
+
+v0.6 把 durable execution 从需要 Agent 主动选择的长任务协议，升级为统一的 adaptive
+`run` 入口，并允许 Operator 为 target 绑定默认 queue。详细接口、兼容性和验收标准见
+[v0.6 发布记录](v0.6.zh-CN.md)。Immutable completion snapshots 顺延到
+[v0.7 计划](v0.7.zh-CN.md)。

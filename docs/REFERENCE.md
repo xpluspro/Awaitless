@@ -1,7 +1,7 @@
 # Awaitless reference guide
 
 This guide contains the technical detail intentionally kept out of the project
-README. It describes Awaitless 0.5.x as shipped by the `awaitless-runner`
+README. It describes Awaitless 0.6.x as shipped by the `awaitless-runner`
 distribution.
 
 ## Requirements and installation
@@ -64,6 +64,8 @@ it with `--config` or `AWAITLESS_CONFIG`. Durable data defaults to
 ```toml
 [defaults]
 backend = "local"
+adaptive_inline_timeout_seconds = 30
+# queue = "gpu0"
 log_tail_lines = 200
 max_return_bytes = 65536
 poll_interval = 2
@@ -72,7 +74,10 @@ mcp_task_poll_interval_seconds = 2
 ```
 
 `backend` may be `local`, `ssh`, or `slurm`. Set `defaults.host` when an SSH or
-Slurm target should be selected automatically.
+Slurm target should be selected automatically. `defaults.queue` binds adaptive
+Local/SSH runs to an operator-created named queue. A `queue` inside one host
+entry overrides the global default for that target. Slurm always ignores
+implicit Awaitless queues and keeps resource admission in Slurm.
 
 ## CLI reference
 
@@ -90,6 +95,7 @@ Commands:
 
 | Command | Purpose |
 |---|---|
+| `run` | Return quick work inline and automatically detach longer or queued work as a durable Job. |
 | `submit` | Create a durable local, SSH, or Slurm job and return before it finishes. |
 | `wait` | Block until a job is terminal or the client-side wait timeout expires. |
 | `completions` | Wait for and replay bounded terminal results across selected jobs. |
@@ -106,6 +112,7 @@ Commands:
 Common operations:
 
 ```bash
+awaitless run --json -- ninja -C build
 awaitless submit --json --name build -- ninja -C build
 awaitless wait <job-id> --json
 awaitless completions <job-a> <job-b> --json
@@ -118,7 +125,7 @@ awaitless queue list --json
 awaitless inspect <job-id> --json
 ```
 
-Important `submit` options:
+Important `run` and `submit` options:
 
 ```text
 --backend {local,ssh,slurm}
@@ -127,6 +134,7 @@ Important `submit` options:
 --env NAME=VALUE
 --timeout DURATION
 --stall-timeout DURATION
+--inline-timeout DURATION  # run only
 --log-dir PATH
 --artifact PATH
 --slurm-option NAME=VALUE
@@ -137,6 +145,31 @@ Important `submit` options:
 
 The command follows `--`, which prevents command arguments from being parsed as
 Awaitless flags.
+
+### Adaptive run
+
+`awaitless run` is the preferred entry point for non-interactive Agent work whose
+duration is unknown or which may need a configured resource queue. Awaitless
+creates the durable Job before launching it, then waits up to
+`defaults.adaptive_inline_timeout_seconds` (30 seconds by default):
+
+```bash
+awaitless run --json -- pytest -q
+awaitless run --inline-timeout 10s --json -- ./benchmark
+```
+
+If the command finishes inside the window, the response contains the ordinary
+terminal result plus `delivery: "inline"` and `detached: false`. If it remains
+active, the response contains its current state, stable Job ID, bounded log
+tails, `delivery: "detached"`, and `detached: true`. Detachment is a successful
+submission, not a runtime timeout; use `wait`, `completions`, or the equivalent
+MCP result tools later. `detach_reason` is `inline_timeout` or `queued`; inline
+results set it to `null`.
+
+An adaptive run routed to a named queue detaches immediately. The queue can be
+passed explicitly, configured globally with `defaults.queue`, or configured for
+one host with `hosts.<name>.queue`. `submit` remains explicit and does not adopt
+default queues, preserving existing scripts.
 
 ### Idempotent submission
 
@@ -421,9 +454,11 @@ isolated `/path/to/logs/<job-id>/` directory for each job.
 
 ## MCP tools and protocol
 
-Awaitless exposes `run_job`, `submit_job`, `wait_for_job`,
+Awaitless exposes `run`, `run_job`, `submit_job`, `wait_for_job`,
 `wait_for_completions`, `get_job_status`, `get_job_logs`, `cancel_job`,
-`list_jobs`, `create_queue`, and `list_queues` over stdio. `run_job` and
+`list_jobs`, `create_queue`, and `list_queues` over stdio. `run` is the preferred
+adaptive entry point: quick commands return inline and longer or queued work
+returns a durable handle. `run_job` and
 `submit_job` accept an optional `queue`. Tasks-aware clients can receive a
 durable Task handle and use `tasks/get`, `tasks/cancel`, and `tasks/update`.
 `wait_for_completions` is an ordinary MCP tool available with or without Tasks

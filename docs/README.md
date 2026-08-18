@@ -23,7 +23,8 @@ and implementation details.
 ## Product and design records
 
 - [Product positioning and evolution principles](PRD.zh-CN.md)
-- [v0.6 immutable completion snapshots — planned](v0.6.zh-CN.md)
+- [v0.7 immutable completion snapshots — planned](v0.7.zh-CN.md)
+- [v0.6 adaptive run](v0.6.zh-CN.md)
 - [v0.5 durable completion feed](v0.5.zh-CN.md)
 - [v0.4 queue release and real-machine acceptance](v0.4.zh-CN.md)
 - [v0.2 Agent and Slurm acceptance contract](v0.2.zh-CN.md)

@@ -1,6 +1,9 @@
 [defaults]
 backend = "local"
 # host = "slurm-cluster"
+# queue = "gpu0"
+# Adaptive run waits this long before returning a durable Job handle.
+adaptive_inline_timeout_seconds = 30
 log_tail_lines = 200
 max_return_bytes = 65536
 poll_interval = 2
@@ -15,6 +18,7 @@ user = "developer"
 identity_file = "~/.ssh/id_ed25519"
 remote_job_dir = "~/.awaitless/jobs"
 remote_queue_dir = "~/.awaitless/queues"
+# queue = "gpu0"
 # gssapi_authentication = false
 # connect_timeout = 8
 # operation_timeout = 20

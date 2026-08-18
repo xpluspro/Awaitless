@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0 — 2026-08-18
+
+- Add the preferred adaptive `run` MCP tool and `awaitless run` CLI command.
+  Every invocation creates a durable Job before launch; quick commands return
+  bounded results inline, while longer commands detach at a configurable inline
+  deadline without restarting or cancelling the workload.
+- Return an explicit `delivery` and `detached` contract. Detached responses keep
+  the stable Job ID, current state, timing, queue identity, and bounded log tails
+  so an Agent can continue useful work and later consume the durable result.
+- Add global and per-host default queue routing for adaptive runs. Operators can
+  bind a target to a named fixed-concurrency queue, so Agents do not select or
+  poll scarce resources on every invocation.
+- Keep `submit_job`, `run_job`, MCP Tasks, `wait_for_job`, completion cursors,
+  and all existing CLI commands backward compatible as low-level or explicit
+  lifecycle interfaces.
+- Reposition Awaitless from a long-running command helper to the adaptive
+  execution layer for non-interactive Agent commands, and update the bundled
+  Skill to route through `run` by default.
+
 ## 0.5.0 — 2026-08-12
 
 - Add a durable multi-job completion feed backed by transactional terminal state

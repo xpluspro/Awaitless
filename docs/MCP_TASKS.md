@@ -1,6 +1,6 @@
 # MCP Tasks compatibility
 
-Awaitless 0.5 implements the `io.modelcontextprotocol/tasks` extension described
+Awaitless implements the `io.modelcontextprotocol/tasks` extension described
 by the MCP Tasks specification dated 2026-07-28. It uses the MCP Python SDK 2.x
 extension API; it does not depend on the removed SDK 1.x experimental Tasks API.
 
@@ -9,9 +9,9 @@ existing durable job store. An Awaitless `job_id` is also the MCP `taskId`, so
 there is no second lifecycle database and no in-memory handle that disappears
 with the stdio process.
 
-The extension is still evolving. Awaitless keeps `submit_job`, `wait_for_job`,
-`wait_for_completions`, `get_job_status`, `get_job_logs`, `cancel_job`, and
-`list_jobs` available while the ecosystem migrates.
+The extension is still evolving. Awaitless keeps adaptive `run`, `submit_job`,
+`wait_for_job`, `wait_for_completions`, `get_job_status`, `get_job_logs`,
+`cancel_job`, and `list_jobs` available while the ecosystem migrates.
 
 ## Negotiation
 
@@ -81,6 +81,13 @@ A Tasks-aware client immediately receives a server-directed Task result:
 If the client does not declare Tasks support, the same `run_job` tool blocks
 and returns its normal `CallToolResult`. This makes one tool safe for both new
 and old MCP clients.
+
+Awaitless 0.6 also exposes `run` as the preferred general execution tool.
+Unlike `run_job`, it does not require Tasks negotiation: quick commands return
+their bounded final result inline, while work that crosses the configured inline
+deadline returns a durable Job handle. Use `run_job` when the caller explicitly
+wants an MCP Task from creation time; use `run` when the caller wants adaptive
+shell-like delivery without predicting command duration.
 
 ## Idempotency guarantee
 

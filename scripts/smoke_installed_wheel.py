@@ -71,6 +71,69 @@ def main() -> int:
         if doctor.get("ok") is not True:
             raise RuntimeError(f"doctor failed: {doctor}")
 
+        adaptive_inline = run(
+            [
+                str(executable),
+                "run",
+                "--inline-timeout",
+                "2s",
+                "--json",
+                "--",
+                sys.executable,
+                "-c",
+                "print('adaptive-wheel-inline')",
+            ],
+            env=environment,
+        )
+        if (
+            adaptive_inline.get("state") != "succeeded"
+            or adaptive_inline.get("delivery") != "inline"
+            or adaptive_inline.get("detached") is not False
+            or adaptive_inline.get("stdout_tail") != "adaptive-wheel-inline\n"
+        ):
+            raise RuntimeError(
+                f"installed-wheel adaptive inline run failed: {adaptive_inline}"
+            )
+
+        adaptive_detached = run(
+            [
+                str(executable),
+                "run",
+                "--inline-timeout",
+                "0.01s",
+                "--json",
+                "--",
+                sys.executable,
+                "-c",
+                "import time; print('adaptive-wheel-detached', flush=True); time.sleep(.2)",
+            ],
+            env=environment,
+        )
+        if (
+            adaptive_detached.get("delivery") != "detached"
+            or adaptive_detached.get("detached") is not True
+            or adaptive_detached.get("detach_reason") != "inline_timeout"
+        ):
+            raise RuntimeError(
+                f"installed-wheel adaptive detach failed: {adaptive_detached}"
+            )
+        adaptive_final = run(
+            [
+                str(executable),
+                "wait",
+                adaptive_detached["job_id"],
+                "--json",
+            ],
+            env=environment,
+        )
+        if (
+            adaptive_final.get("state") != "succeeded"
+            or adaptive_final.get("stdout_tail") != "adaptive-wheel-detached\n"
+        ):
+            raise RuntimeError(
+                f"installed-wheel detached recovery failed: {adaptive_final}"
+            )
+
         submitted = run(
             [
                 str(executable),

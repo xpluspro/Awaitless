@@ -18,6 +18,8 @@ class Settings:
     data_dir: Path
     default_backend: str = "local"
     default_host: str | None = None
+    default_queue: str | None = None
+    adaptive_inline_timeout_seconds: float = 30.0
     log_tail_lines: int = DEFAULT_TAIL_LINES
     max_return_bytes: int = DEFAULT_MAX_RETURN_BYTES
     poll_interval: float = DEFAULT_POLL_INTERVAL
@@ -53,6 +55,10 @@ def load_settings(config_path: str | None = None) -> Settings:
         data_dir=data_dir,
         default_backend=str(defaults.get("backend", "local")),
         default_host=str(defaults["host"]) if defaults.get("host") else None,
+        default_queue=str(defaults["queue"]) if defaults.get("queue") else None,
+        adaptive_inline_timeout_seconds=float(
+            defaults.get("adaptive_inline_timeout_seconds", 30)
+        ),
         log_tail_lines=int(defaults.get("log_tail_lines", DEFAULT_TAIL_LINES)),
         max_return_bytes=int(defaults.get("max_return_bytes", DEFAULT_MAX_RETURN_BYTES)),
         poll_interval=float(defaults.get("poll_interval", DEFAULT_POLL_INTERVAL)),
@@ -69,8 +75,28 @@ def load_settings(config_path: str | None = None) -> Settings:
         raise ValueError("defaults.mcp_task_ttl_seconds must be positive")
     if settings.mcp_task_poll_interval_seconds <= 0:
         raise ValueError("defaults.mcp_task_poll_interval_seconds must be positive")
+    if settings.adaptive_inline_timeout_seconds < 0:
+        raise ValueError(
+            "defaults.adaptive_inline_timeout_seconds must be non-negative"
+        )
     settings.jobs_dir.mkdir(parents=True, exist_ok=True)
     return settings
+
+
+def adaptive_queue(
+    settings: Settings,
+    *,
+    backend: str,
+    host: str | None,
+    explicit_queue: str | None,
+) -> str | None:
+    if explicit_queue is not None or backend == "slurm":
+        return explicit_queue
+    if host:
+        configured = settings.hosts.get(host, {}).get("queue")
+        if configured:
+            return str(configured)
+    return settings.default_queue
 
 
 def ssh_target_and_options(settings: Settings, host: str) -> tuple[str, list[str], str]:

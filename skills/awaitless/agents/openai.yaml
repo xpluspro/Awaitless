@@ -1,4 +1,4 @@
 interface:
   display_name: "Awaitless"
-  short_description: "Submit and consume durable queued coding jobs"
-  default_prompt: "Use $awaitless to submit this long-running work once and consume its durable results."
+  short_description: "Adaptively run durable queued coding jobs"
+  default_prompt: "Use $awaitless as the adaptive execution layer for this non-interactive work and consume any detached result durably."

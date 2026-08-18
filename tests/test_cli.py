@@ -70,6 +70,78 @@ class CLITest(unittest.TestCase):
         self.env["HOME"] = str(remote_home)
         return remote_home
 
+    def test_adaptive_run_returns_quick_result_inline(self) -> None:
+        value = json.loads(
+            self.run_cli(
+                "run",
+                "--inline-timeout",
+                "1s",
+                "--json",
+                "--",
+                sys.executable,
+                "-c",
+                "print('adaptive-inline')",
+            ).stdout
+        )
+        self.assertEqual(value["state"], "succeeded")
+        self.assertEqual(value["delivery"], "inline")
+        self.assertFalse(value["detached"])
+        self.assertIsNone(value["detach_reason"])
+        self.assertEqual(value["stdout_tail"], "adaptive-inline\n")
+
+    def test_adaptive_run_detaches_without_cancelling_long_job(self) -> None:
+        value = json.loads(
+            self.run_cli(
+                "run",
+                "--inline-timeout",
+                "0.05s",
+                "--json",
+                "--",
+                sys.executable,
+                "-c",
+                "import time; print('started', flush=True); time.sleep(.3)",
+            ).stdout
+        )
+        self.assertEqual(value["delivery"], "detached")
+        self.assertTrue(value["detached"])
+        self.assertEqual(value["detach_reason"], "inline_timeout")
+        self.assertIn(value["state"], {"starting", "running", "stalled"})
+        self.assertEqual(value["stdout_tail"], "started\n")
+        final = json.loads(
+            self.run_cli("wait", value["job_id"], "--json").stdout
+        )
+        self.assertEqual(final["state"], "succeeded")
+
+    def test_adaptive_run_uses_operator_default_queue(self) -> None:
+        self.run_cli("queue", "create", "gpu0", "--concurrency", "1", "--json")
+        Path(self.env["AWAITLESS_CONFIG"]).write_text(
+            "[defaults]\n"
+            "poll_interval = 0.05\n"
+            "queue = \"gpu0\"\n"
+            "adaptive_inline_timeout_seconds = 1\n",
+            encoding="utf-8",
+        )
+        value = json.loads(
+            self.run_cli(
+                "run",
+                "--json",
+                "--",
+                sys.executable,
+                "-c",
+                "print('queued-default')",
+            ).stdout
+        )
+        self.assertEqual(value["queue"], "gpu0")
+        self.assertEqual(value["delivery"], "detached")
+        self.assertTrue(value["detached"])
+        self.assertEqual(value["detach_reason"], "queued")
+        self.assertEqual(value["inline_timeout_seconds"], 1)
+        final = json.loads(
+            self.run_cli("wait", value["job_id"], "--json").stdout
+        )
+        self.assertEqual(final["state"], "succeeded")
+        self.assertEqual(final["stdout_tail"], "queued-default\n")
+
     def test_success_survives_new_client_and_separates_logs(self) -> None:
         job = self.submit("bash", "-c", "echo hello; echo warning >&2; sleep .1")
         result = self.run_cli("wait", job, "--json")

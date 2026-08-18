@@ -13,7 +13,7 @@ from typing import Any
 
 from . import __version__
 from .backends.ssh import SSHError
-from .config import load_settings
+from .config import adaptive_queue, load_settings
 from .constants import EXIT_CODES
 from .service import AwaitlessError, Service
 from .util import new_job_id, parse_duration
@@ -21,7 +21,7 @@ from .util import new_job_id, parse_duration
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
-        prog="awaitless", description="Durable execution for coding agents"
+        prog="awaitless", description="Adaptive durable execution for coding agents"
     )
     root.add_argument("--config", help="configuration TOML path")
     root.add_argument("--json", action="store_true", dest="global_json", help="emit JSON")
@@ -29,6 +29,35 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--quiet", action="store_true")
     root.add_argument("--version", action="version", version=f"awaitless {__version__}")
     commands = root.add_subparsers(dest="action", required=True)
+
+    run = commands.add_parser(
+        "run", help="run inline when quick and detach automatically when longer"
+    )
+    run.add_argument("--backend", choices=["local", "ssh", "slurm"])
+    run.add_argument("--host")
+    run.add_argument("--cwd")
+    run.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    run.add_argument("--timeout")
+    run.add_argument("--stall-timeout")
+    run.add_argument("--inline-timeout")
+    run.add_argument("--log-dir")
+    run.add_argument("--artifact", action="append", default=[])
+    run.add_argument("--result-file", action="append", default=[], dest="artifact")
+    run.add_argument(
+        "--slurm-option",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="per-job Slurm option (for example partition=gpu or gres=gpu:1)",
+    )
+    run.add_argument("--name")
+    run.add_argument("--queue", help="override the target's default queue")
+    run.add_argument(
+        "--client-request-id",
+        help="idempotency key; a retry with identical parameters returns the original job",
+    )
+    run.add_argument("--json", action="store_true")
+    run.add_argument("command", nargs=argparse.REMAINDER)
 
     submit = commands.add_parser("submit", help="submit a durable job")
     submit.add_argument("--backend", choices=["local", "ssh", "slurm"])
@@ -339,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings(args.config)
     service = Service(settings)
     try:
-        if args.action == "submit":
+        if args.action in {"run", "submit"}:
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
             host = args.host or (
                 None if args.backend == "local" else settings.default_host
@@ -349,6 +378,14 @@ def main(argv: list[str] | None = None) -> int:
                 if host
                 else settings.default_backend
             )
+            queue = args.queue
+            if args.action == "run":
+                queue = adaptive_queue(
+                    settings,
+                    backend=backend,
+                    host=host,
+                    explicit_queue=queue,
+                )
             result = service.submit(
                 job_id=new_job_id(), command=command, backend=backend, host=host, cwd=args.cwd,
                 env=_env(args.env), timeout_seconds=parse_duration(args.timeout),
@@ -356,8 +393,23 @@ def main(argv: list[str] | None = None) -> int:
                 artifacts=args.artifact, log_dir=args.log_dir,
                 backend_options=_slurm_options(args.slurm_option),
                 client_request_id=args.client_request_id,
-                queue_name=args.queue,
+                queue_name=queue,
             )
+            if args.action == "run":
+                inline_timeout = parse_duration(args.inline_timeout)
+                if inline_timeout is None:
+                    inline_timeout = settings.adaptive_inline_timeout_seconds
+                output = service.adaptive_wait(
+                    result["job_id"],
+                    inline_timeout,
+                    detach_immediately=result["state"] == "queued",
+                )
+                _print(output, json_mode, quiet=args.quiet)
+                return (
+                    0
+                    if output["detached"]
+                    else EXIT_CODES.get(output["state"], 1)
+                )
             output = {
                 key: result[key]
                 for key in (

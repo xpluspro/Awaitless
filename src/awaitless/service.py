@@ -286,6 +286,42 @@ class Service:
             remaining = None if wait_timeout is None else wait_timeout - (time.monotonic() - started)
             time.sleep(max(0.05, min(self.settings.poll_interval, remaining or self.settings.poll_interval)))
 
+    def adaptive_wait(
+        self,
+        job_id: str,
+        inline_timeout_seconds: float,
+        *,
+        detach_immediately: bool = False,
+    ) -> dict[str, Any]:
+        """Deliver a quick result inline or detach without changing the Job lifecycle."""
+        if inline_timeout_seconds < 0:
+            raise AwaitlessError("inline timeout must be non-negative")
+        wait_timeout = 0.0 if detach_immediately else inline_timeout_seconds
+        result, detached = self.wait(job_id, wait_timeout)
+        result.pop("wait_timed_out", None)
+        if detached and result.get("backend_connected", True):
+            try:
+                result.update(
+                    self.logs(
+                        job_id,
+                        self.settings.log_tail_lines,
+                        self.settings.max_return_bytes,
+                    )
+                )
+            except SSHError:
+                result["backend_connected"] = False
+        result.update(
+            delivery="detached" if detached else "inline",
+            detached=detached,
+            detach_reason=(
+                "queued" if detach_immediately else "inline_timeout"
+            )
+            if detached
+            else None,
+            inline_timeout_seconds=inline_timeout_seconds,
+        )
+        return result
+
     def completions(
         self,
         job_ids: list[str],

@@ -79,6 +79,7 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                     {tool.name for tool in tools.tools},
                     {
                         "create_queue",
+                        "run",
                         "submit_job",
                         "run_job",
                         "wait_for_job",
@@ -95,6 +96,39 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertFalse(created_queue.is_error, created_queue.content)
                 self.assertTrue(created_queue.structured_content["created"])
+
+                inline = await session.call_tool(
+                    "run",
+                    {
+                        "command": [sys.executable, "-c", "print('adaptive-inline')"],
+                        "inline_timeout_seconds": 1,
+                    },
+                )
+                self.assertFalse(inline.is_error, inline.content)
+                self.assertEqual(inline.structured_content["delivery"], "inline")
+                self.assertFalse(inline.structured_content["detached"])
+                self.assertEqual(
+                    inline.structured_content["stdout_tail"], "adaptive-inline\n"
+                )
+
+                detached = await session.call_tool(
+                    "run",
+                    {
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            "import time; print('adaptive-detached', flush=True); time.sleep(.3)",
+                        ],
+                        "inline_timeout_seconds": 0.05,
+                    },
+                )
+                self.assertFalse(detached.is_error, detached.content)
+                self.assertEqual(detached.structured_content["delivery"], "detached")
+                self.assertTrue(detached.structured_content["detached"])
+                self.assertEqual(
+                    detached.structured_content["detach_reason"], "inline_timeout"
+                )
+                detached_job_id = detached.structured_content["job_id"]
                 source = (
                     "from pathlib import Path; import time; "
                     "time.sleep(0.2); "
@@ -121,6 +155,13 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed["exit_code"], 0)
         self.assertEqual(completed["stdout_tail"], "mcp-resume-ok\n")
         self.assertEqual(completed["parsed_results"], {"agent_native": True})
+        adaptive_completed = await asyncio.wait_for(
+            self.call("wait_for_job", {"job_id": detached_job_id}), timeout=15
+        )
+        self.assertEqual(adaptive_completed["state"], "succeeded")
+        self.assertEqual(
+            adaptive_completed["stdout_tail"], "adaptive-detached\n"
+        )
 
         status = await self.call("get_job_status", {"job_id": job_id})
         self.assertEqual(status["state"], "succeeded")
@@ -131,7 +172,7 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
 
         listed = await self.call("list_jobs", {"limit": 10})
         self.assertEqual(listed["jobs"][0]["job_id"], job_id)
-        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["count"], 3)
         queues = await self.call("list_queues", {})
         self.assertEqual(queues["queues"][0]["name"], "mcp-gpu")
         self.assertEqual(queues["queues"][0]["total_jobs"], 1)
@@ -213,6 +254,33 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(drained["completions"], [])
         self.assertFalse(drained["wait_timed_out"])
+
+    async def test_adaptive_run_uses_operator_default_queue(self) -> None:
+        created = await self.call(
+            "create_queue", {"name": "default-gpu", "concurrency": 1}
+        )
+        self.assertTrue(created["created"])
+        Path(self.environment["AWAITLESS_CONFIG"]).write_text(
+            "[defaults]\n"
+            "poll_interval = 0.02\n"
+            "queue = \"default-gpu\"\n"
+            "adaptive_inline_timeout_seconds = 1\n",
+            encoding="utf-8",
+        )
+        routed = await self.call(
+            "run",
+            {"command": [sys.executable, "-c", "print('default-queue')"]},
+        )
+        self.assertEqual(routed["queue"], "default-gpu")
+        self.assertEqual(routed["delivery"], "detached")
+        self.assertTrue(routed["detached"])
+        self.assertEqual(routed["detach_reason"], "queued")
+        self.assertEqual(routed["inline_timeout_seconds"], 1)
+        completed = await self.call(
+            "wait_for_job", {"job_id": routed["job_id"]}
+        )
+        self.assertEqual(completed["state"], "succeeded")
+        self.assertEqual(completed["stdout_tail"], "default-queue\n")
 
     async def test_tasks_extension_disconnect_replay_and_inline_result(self) -> None:
         assert Client is not None

@@ -1,34 +1,42 @@
 ---
 name: awaitless
-description: Submit, queue, recover, consume completions from, inspect, or cancel durable long-running local, SSH, and Slurm commands with the Awaitless CLI. Use when a coding task launches a non-interactive command expected to run longer than 30 seconds, multiple independent jobs should finish without per-job polling, work must wait for a named concurrency-limited resource, a remote job must survive disconnects, or bounded logs and structured artifacts should return across Agent sessions.
+description: Run non-interactive builds, tests, benchmarks, and local, SSH, or Slurm commands through Awaitless's adaptive durable execution layer. Use by default when command duration is uncertain, work may outlive the current turn, a named scarce resource may be queued, multiple jobs should complete without polling, or bounded logs and artifacts must survive disconnects.
 ---
 
 # Use Awaitless
 
-## Choose the execution mode
+## Route execution
 
-- Run ordinary commands expected to finish within 30 seconds directly.
+- Run quick repository inspection such as `rg`, `cat`, and `git status` directly.
 - Use a PTY for interactive commands that need prompts or terminal input.
-- Use Awaitless for long, non-interactive local or SSH commands.
+- Use `awaitless run` for non-interactive builds, tests, benchmarks, remote
+  commands, and commands whose duration is uncertain. Do not estimate whether
+  they will cross a duration threshold; adaptive run handles that boundary.
 - Use the appropriate scheduler rather than Awaitless local/SSH when a cluster requires one.
 
-## Run a durable job
+## Run adaptively
 
-1. Submit the command and request JSON:
+1. Run the command and request JSON:
 
    ```bash
-   awaitless submit --json --cwd /path/to/project -- command arg1 arg2
+   awaitless run --json --cwd /path/to/project -- command arg1 arg2
    ```
 
    Add `--host <configured-host>` for SSH. Declare machine-readable output with `--artifact results.json`.
 
-   When the user has named a preconfigured scarce resource, add
-   `--queue <name>`. Submit once even when the queue is busy; do not check the
-   resource first. Create or change queue policy only when the user asks.
+   Omit `--queue` when the Operator configured a default for the target. When the
+   user explicitly names another preconfigured scarce resource, add
+   `--queue <name>`. Never probe the resource first. Create or change queue
+   policy only when the user asks.
 
-2. Save the returned `job_id`.
+2. Inspect `delivery`:
 
-3. For one Job, call wait exactly once:
+   - `inline`: analyze the terminal state, exit code, bounded logs, and Artifact
+     immediately.
+   - `detached`: save `job_id`, continue useful work, then consume the result at
+     one blocking boundary.
+
+3. For one detached Job, call wait exactly once when its result is needed:
 
    ```bash
    awaitless wait <job_id> --json

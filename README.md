@@ -6,16 +6,16 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**Durable execution for coding agents.**
+**Adaptive durable execution for coding agents.**
 
-Submit long-running work once. Awaitless handles queues, scarce resources,
-disconnects, and results across local, SSH, and Slurm. Your workload stays on
-infrastructure you already own.
+Run commands through one execution layer. Quick work returns inline; longer or
+queued work becomes durable across local, SSH, and Slurm. Your workload stays
+on infrastructure you already own.
 
 > **Agents submit work. Awaitless owns execution.**
 
-Awaitless is the durable execution layer between coding agents and the compute
-they use. It gives agents one stable job contract while reusing your local
+Awaitless is the adaptive durable execution layer between coding agents and the
+compute they use. It gives agents one stable job contract while reusing your local
 machine, SSH hosts, and Slurm clusters underneath.
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) ·
@@ -56,19 +56,22 @@ ssh gpu 'tail -n 200 job.log'  # again...
 ssh gpu 'tail -n 200 job.log'  # and again...
 ```
 
-Awaitless turns that lifecycle into one durable submission and one result
+Awaitless turns that lifecycle into one adaptive execution call and one result
 boundary:
 
 ```bash
-awaitless submit --json --host gpu --artifact results.json -- ./run_benchmark
-# {"job_id":"job_019F...","state":"running","backend":"ssh"}
+awaitless run --json --host gpu --artifact results.json -- ./run_benchmark
+# quick: {"state":"succeeded","delivery":"inline","exit_code":0,...}
+# longer: {"job_id":"job_019F...","state":"running","delivery":"detached",...}
 
 awaitless wait job_019F... --json
 # {"state":"succeeded","exit_code":0,"parsed_results":{...}}
 ```
 
-Interrupt the waiter, close the MCP client, or start a fresh agent session. The
-job keeps running; the stable ID is enough to recover its result.
+Every `run` is durable before launch. Finishing within the inline window looks
+like an ordinary command result; crossing it only detaches the waiter. Interrupt
+the waiter, close the MCP client, or start a fresh agent session: the Job keeps
+running and its stable ID recovers the result.
 
 ## Submit work before the resource is free
 
@@ -86,6 +89,16 @@ The first command runs and the others report `queued`. Each starts automatically
 when capacity becomes available. There is no priority or preemption: Awaitless
 uses fixed concurrency and FIFO admission, and never kills running work to make
 room for a later job.
+
+Operators can also bind adaptive runs to a queue globally or per host:
+
+```toml
+[hosts.gpu]
+hostname = "gpu.example.com"
+queue = "gpu0"
+```
+
+The Agent can then call `run` without choosing a queue or probing the GPU first.
 
 ## Consume whichever job finishes next
 
@@ -148,17 +161,18 @@ your client):
 }
 ```
 
-Then ask the agent to run a long command with Awaitless. Tasks-aware clients
-receive a durable MCP Task handle immediately; other clients use `submit_job`
-followed by `wait_for_job`. Retrying an expensive submission with the same
+The preferred `run` tool returns quick commands inline and automatically gives
+longer or queued work a durable handle. Tasks-aware clients can still use
+`run_job`, while low-level clients retain `submit_job` and `wait_for_job`.
+Retrying an expensive submission with the same
 `client_request_id` cannot launch a duplicate job. For parallel work, every
 client can use `wait_for_completions` regardless of MCP Tasks support.
 
 For direct CLI use, the whole loop is:
 
 ```bash
-awaitless submit --json --name tests -- python -m pytest -q
-# Save the returned job_id, then:
+awaitless run --json --name tests -- python -m pytest -q
+# If delivery is detached, save the returned job_id, then:
 awaitless wait <job-id> --json
 ```
 
@@ -177,7 +191,7 @@ changing how the agent submits and collects work.
 
 | Tool | Best at | What the agent still has to build |
 |---|---|---|
-| Blocking shell call | Short commands | Nothing—use it when disconnect recovery and a free tool slot do not matter. |
+| Blocking shell call | Quick inspection and interactive work | Lifecycle management once an engineering command runs longer than expected. |
 | Shell polling / `nohup` | Keeping a basic command alive | IDs, status, exit-code recovery, bounded logs, cancellation, deduplication, and result parsing. |
 | `tmux` | Humans detaching from interactive shells, REPLs, and TUIs | A reliable non-interactive job protocol and wrapper glue. |
 | **Awaitless** | Agent-run builds, tests, benchmarks, remote jobs, and cluster work | Only the command and, optionally, the JSON Artifact to return. |
@@ -190,13 +204,18 @@ cluster resource scheduling to Slurm.
 
 ```mermaid
 flowchart LR
-    A["Coding agent"] -->|"submit once"| B["Awaitless MCP / CLI"]
+    A["Coding agent"] -->|"run"| B["Awaitless MCP / CLI"]
     B --> C[("SQLite job record")]
-    B --> Q{"Named queue?"}
+    C --> Q["Optional queue admission"]
     Q -->|"capacity available"| D{"Backend"}
     D --> L["Local process"]
     D --> S["SSH host"]
     D --> H["Slurm allocation"]
+    L --> I{"Finished inline?"}
+    S --> I
+    H --> I
+    I -->|"yes: result"| A
+    I -->|"no: durable handle"| A
     A -. "reconnect with stable ID" .-> C
     C --> E["Durable completion cursor"]
     E -->|"state + exit code + bounded logs + Artifacts"| A
@@ -211,6 +230,8 @@ tails enter the agent context.
 
 - [Documentation index](docs/README.md)
 - [Product positioning and evolution principles](docs/PRD.zh-CN.md)
+- [v0.6 adaptive run](docs/v0.6.zh-CN.md)
+- [v0.7 immutable completion snapshots plan](docs/v0.7.zh-CN.md)
 - [v0.5 durable completion feed](docs/v0.5.zh-CN.md)
 - [CLI, configuration, SSH, Slurm, persistence, Artifacts, and troubleshooting](docs/REFERENCE.md)
 - [MCP Tasks protocol and compatibility](docs/MCP_TASKS.md)

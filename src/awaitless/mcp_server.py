@@ -7,7 +7,7 @@ from typing import Any, Iterator, Literal
 from mcp.server.mcpserver import MCPServer
 
 from . import __version__
-from .config import load_settings
+from .config import adaptive_queue, load_settings
 from .mcp_tasks import AwaitlessTasksExtension, RunJobArguments
 from .service import AwaitlessError, Service
 from .util import new_job_id
@@ -59,8 +59,19 @@ def _submit_with_service(
     client_request_id: str | None,
     queue: str | None,
     as_mcp_task: bool,
+    use_default_queue: bool = False,
 ) -> dict[str, Any]:
     selected, selected_host = _selected_target(service, backend, host)
+    selected_queue = (
+        adaptive_queue(
+            service.settings,
+            backend=selected,
+            host=selected_host,
+            explicit_queue=queue,
+        )
+        if use_default_queue
+        else queue
+    )
     task_ttl_ms = (
         max(1, round(service.settings.mcp_task_ttl_seconds * 1000))
         if as_mcp_task
@@ -80,7 +91,7 @@ def _submit_with_service(
         backend_options=slurm_options or {},
         client_request_id=client_request_id,
         mcp_task_ttl_ms=task_ttl_ms,
-        queue_name=queue,
+        queue_name=selected_queue,
     )
 
 
@@ -96,10 +107,12 @@ def _submit_task(arguments: RunJobArguments) -> dict[str, Any]:
 server = MCPServer(
     name="awaitless",
     title="Awaitless",
-    description="Durable execution and completion feeds for coding agents across local, SSH, and Slurm",
+    description="Adaptive durable execution and resource queues for coding agents across local, SSH, and Slurm",
     instructions=(
-        "For MCP Tasks clients, call run_job with a stable client_request_id and retain "
-        "the returned taskId. Other clients can use submit_job plus wait_for_job. "
+        "Use run as the default for non-interactive commands: quick work returns inline, "
+        "while longer work automatically returns a durable Job handle. "
+        "For MCP Tasks clients that explicitly need a Task handle, call run_job with a "
+        "stable client_request_id. Low-level clients can use submit_job plus wait_for_job. "
         "For multiple independent jobs, use wait_for_completions and advance its "
         "durable cursor only after processing each batch. "
         "A client disconnect never cancels the submitted job. Use a preconfigured "
@@ -108,6 +121,61 @@ server = MCPServer(
     version=__version__,
     extensions=[AwaitlessTasksExtension(_service, _submit_task)],
 )
+
+
+@server.tool()
+def run(
+    command: list[str],
+    backend: Literal["local", "ssh", "slurm"] | None = None,
+    host: str | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    timeout_seconds: float | None = None,
+    stall_timeout_seconds: float | None = None,
+    inline_timeout_seconds: float | None = None,
+    name: str | None = None,
+    artifacts: list[str] | None = None,
+    slurm_options: dict[str, str | int | float] | None = None,
+    client_request_id: str | None = None,
+    queue: str | None = None,
+) -> dict[str, Any]:
+    """Run a non-interactive command through Awaitless's adaptive execution path.
+
+    Every command is a durable Job from launch. Commands that finish within the
+    inline timeout return their ordinary bounded result. Longer or queued work
+    returns a detached Job handle without cancelling the workload. Omit queue to
+    use an operator-configured default queue for the selected target.
+    """
+    with _service() as service:
+        selected_inline_timeout = (
+            service.settings.adaptive_inline_timeout_seconds
+            if inline_timeout_seconds is None
+            else inline_timeout_seconds
+        )
+        if selected_inline_timeout < 0:
+            raise AwaitlessError("inline_timeout_seconds must be non-negative")
+        submitted = _submit_with_service(
+            service,
+            command=command,
+            backend=backend,
+            host=host,
+            cwd=cwd,
+            env=env,
+            timeout_seconds=timeout_seconds,
+            stall_timeout_seconds=stall_timeout_seconds,
+            name=name,
+            artifacts=artifacts,
+            slurm_options=slurm_options,
+            client_request_id=client_request_id,
+            queue=queue,
+            as_mcp_task=False,
+            use_default_queue=True,
+        )
+        return service.adaptive_wait(
+            submitted["job_id"],
+            selected_inline_timeout,
+            detach_immediately=submitted["state"] == "queued",
+        )
 
 
 @server.tool()

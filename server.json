@@ -2,19 +2,19 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.xpluspro/awaitless",
   "title": "Awaitless",
-  "description": "Durable execution and completion feeds for coding agents across local, SSH, and Slurm.",
+  "description": "Adaptive durable execution and resource queues for coding agents across local, SSH, and Slurm.",
   "repository": {
     "url": "https://github.com/xpluspro/Awaitless",
     "source": "github"
   },
   "websiteUrl": "https://github.com/xpluspro/Awaitless#readme",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "awaitless-runner",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
