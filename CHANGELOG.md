@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Reframe named queues as durable fixed-concurrency admission control for scarce
+  resources, and document that discovery, topology, leases, multi-resource
+  allocation, and physical cluster scheduling remain outside Awaitless.
+- Move performance evidence below the execution-layer model in both READMEs so
+  durable jobs, named queues, and completion recovery define the product first.
+- Harden the adaptive detach test for slower Python 3.14 startup by asserting
+  output at the durable completion boundary instead of the 50 ms detach snapshot.
+
 ## 0.6.0 — 2026-08-18
 
 - Add the preferred adaptive `run` MCP tool and `awaitless run` CLI command.

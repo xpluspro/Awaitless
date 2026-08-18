@@ -16,9 +16,9 @@ Awaitless 让 Claude Code、Codex、OpenCode 等 Coding Agent 只声明“我要
 
 > **Agents submit work. Awaitless owns execution.**
 
-这里的 `owns execution` 指 Awaitless 对外提供稳定的执行生命周期：持久化、准入、状态、
-取消、结果与恢复。实际计算仍运行在用户自己的 Local、SSH 或 Slurm 基础设施上；使用
-Slurm 时，Awaitless 把物理资源调度继续交给 Slurm。
+这里的 `owns execution` 指 Awaitless 对外提供稳定的任务生命周期：持久化、准入、状态、
+取消、结果与恢复，而不是拥有或分配物理资源。实际计算仍运行在用户自己的 Local、SSH
+或 Slurm 基础设施上；使用 Slurm 时，Awaitless 把物理资源调度继续交给 Slurm。
 
 ---
 
@@ -42,8 +42,7 @@ Agent
   ▼
 Awaitless
   ├── durable jobs
-  ├── execution queues
-  ├── resource ownership
+  ├── named queue admission
   ├── concurrency control
   ├── completion / continuation
   ├── cancellation
@@ -128,7 +127,7 @@ Agent session 的关闭、waiter 的中断或 stdio MCP server 的重启，都�
 当前状态：v0.6 已在 Local、SSH 和 Slurm 上提供稳定 Job ID、持久状态、取消、有限日志、
 JSON Artifact 和基于 `client_request_id` 的幂等提交。
 
-### 3.2 Queue & Resource Ownership
+### 3.2 Named Scarce-resource Queues
 
 有限资源不应该由 Agent 通过 `nvidia-smi`、`ps` 或 SSH polling 管理。例如一张 GPU：
 
@@ -140,11 +139,12 @@ benchmark C    QUEUED
 
 Agent 应该能够立即提交全部工作意图，由 Awaitless 决定任务何时获得执行资格。
 
-当前状态：v0.6 已为 Local 和 SSH 提供持久命名 FIFO 队列、固定并发、非抢占准入和 queued
-job cancellation。Slurm 仍是 Slurm Job 的唯一资源调度器，Awaitless 只统一它的任务状态
-与结果契约。
+当前状态：v0.6 已为 Local 和 SSH 提供针对命名稀缺资源的持久化准入控制：持久 FIFO 队列、
+固定并发、非抢占准入和 queued job cancellation。Slurm 仍是 Slurm Job 的唯一资源调度器，
+Awaitless 只统一它的任务状态与结果契约。
 
-当前队列不是通用资源调度器。它不提供 priority、抢占、GPU 自动发现、配额或 DAG。
+当前队列不是通用资源管理器或资源调度器。它不提供 priority、抢占、资源发现、GPU topology、
+动态 allocation、lease、配额、DAG，也不组合处理 `--gpus 2 --mem 64G` 这类多资源申请。
 
 Operator 可以为全局或某个 host 配置默认 queue。adaptive `run` 自动采用该 queue，Agent
 不需要在每次调用时重新选择资源队列；显式资源声明和自动设备发现仍不属于当前版本。
@@ -311,7 +311,7 @@ wait 超时、MCP 断线或 Agent session 关闭都不是取消信号。只有�
 | 稳定 Job ID 与幂等提交 | 已交付 | 作为所有新接口的身份基础 |
 | 有界日志与 JSON Artifact | 已交付 | completion 返回继续遵守同一预算 |
 | 取消、超时与断线恢复 | 已交付 | 增加 completion 路径的恢复验收 |
-| Local / SSH 固定并发 FIFO 队列 | MVP 已交付 | 暂不加入 priority、抢占和 GPU discovery |
+| Local / SSH 命名稀缺资源 FIFO 准入 | MVP 已交付 | 保持固定并发边界，不扩张为通用资源管理器 |
 | MCP Tasks | 兼容层已交付 | 不把协议 polling 当作产品最终语义 |
 | 多 Job completion / continuation | 持久 feed 已交付 | 由真实使用决定是否增加宿主 wakeup adapter |
 | Adaptive `run` routing | 已交付 | 以无提醒采用率和误路由率评估默认行为 |

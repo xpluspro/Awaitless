@@ -21,31 +21,28 @@ machine, SSH hosts, and Slurm clusters underneath.
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) ·
 [Benchmarks](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
 
-## Measured on real agent workloads
+## One job lifecycle across your existing compute
 
-| Result | Plain tmux / polling | Awaitless |
-|---|---:|---:|
-| Median tool calls in 20 paired Agent cases | 7 | **2 (71.4% fewer)** |
-| API usage tokens per correct job | 25,974.2 | **3,820.8 (85.3% fewer)** |
-| Agent-visible calls in a real SSH polling workload | 13 | **2** |
+```text
+Coding agent → submit work → Awaitless owns the job lifecycle → Local / SSH / Slurm
+```
 
-The Agent results used the same DeepSeek model, prompt, workload, and seed on
-2026-08-10. Awaitless returned the correct task state, exit code, Artifact, and
-log contract in 20/20 cases; one empty final model response made the strict
-end-to-end score 19/20. A strong 319-line tmux wrapper also reached two calls
-and used 9.2% fewer tokens than Awaitless—the value there is the built-in,
-maintained protocol rather than a universal token advantage.
+| Durable jobs | Named scarce-resource queues | Completion and recovery |
+|---|---|---|
+| Stable IDs, state, cancellation, bounded logs, and Artifacts survive client disconnects. | Durable FIFO admission prevents too many jobs from entering a named resource at once. | Exit codes and results remain available by Job ID or replayable completion cursor. |
 
-Read the [full Agent report](metric/results/deepseek-agent-v2-report.md), the
-[benchmark methodology](metric/README.md), and the separate
-[SSH polling experiment with raw results](benchmarks/README.md).
+Awaitless owns the **job lifecycle**, not the hardware. It does not discover
+resources, understand GPU topology, allocate multiple resources, or replace a
+cluster scheduler. Operators name queues and set fixed concurrency; Slurm
+continues to handle requests such as `--gpus 2 --mem 64G` and all physical
+cluster scheduling.
 
 ![Awaitless SSH submit, disconnect, resume, and Artifact demo](https://raw.githubusercontent.com/xpluspro/Awaitless/main/assets/awaitless-demo.gif)
 
 ## Your coding agent should write code, not babysit jobs
 
 An agent can write its own `run → sleep → check` loop. The harder problem is
-making job identity, disconnect recovery, resource admission, cancellation, and
+making job identity, disconnect recovery, queue admission, cancellation, and
 result delivery reliable across long workloads and changing sessions. Without
 that execution layer, the agent repeatedly pulls the same growing log back into
 its context:
@@ -73,7 +70,7 @@ like an ordinary command result; crossing it only detaches the waiter. Interrupt
 the waiter, close the MCP client, or start a fresh agent session: the Job keeps
 running and its stable ID recovers the result.
 
-## Submit work before the resource is free
+## Queue work before a named resource is free
 
 Create a durable FIFO queue once, then submit every command immediately:
 
@@ -86,9 +83,9 @@ awaitless submit --queue gpu0 -- python train_c.py
 ```
 
 The first command runs and the others report `queued`. Each starts automatically
-when capacity becomes available. There is no priority or preemption: Awaitless
-uses fixed concurrency and FIFO admission, and never kills running work to make
-room for a later job.
+when capacity becomes available. This is durable admission control for a named
+scarce resource: fixed concurrency and FIFO ordering, with no priority or
+preemption. Awaitless never kills running work to make room for a later job.
 
 Operators can also bind adaptive runs to a queue globally or per host:
 
@@ -99,6 +96,11 @@ queue = "gpu0"
 ```
 
 The Agent can then call `run` without choosing a queue or probing the GPU first.
+
+This queue does not discover resources, understand GPU topology, dynamically
+allocate devices, issue leases, or combine requests such as two GPUs plus 64 GB
+of memory. Use Slurm or another scheduler for those responsibilities; Awaitless
+provides the Agent-facing job lifecycle around that scheduler.
 
 ## Consume whichever job finishes next
 
@@ -123,6 +125,28 @@ In the checked-in deterministic three-Job protocol case, per-Job polling and
 retrieval used 13 Agent-visible CLI calls while the completion feed used 6. It
 is a protocol benchmark, not a model or token claim. See the
 [method and raw result](benchmarks/README.md#multi-job-completion-benchmark).
+
+## Measured on real agent workloads
+
+These results show why a maintained execution protocol is useful; reduced tool
+calls and tokens are evidence, not the product category.
+
+| Result | Plain tmux / polling | Awaitless |
+|---|---:|---:|
+| Median tool calls in 20 paired Agent cases | 7 | **2 (71.4% fewer)** |
+| API usage tokens per correct job | 25,974.2 | **3,820.8 (85.3% fewer)** |
+| Agent-visible calls in a real SSH polling workload | 13 | **2** |
+
+The Agent results used the same DeepSeek model, prompt, workload, and seed on
+2026-08-10. Awaitless returned the correct task state, exit code, Artifact, and
+log contract in 20/20 cases; one empty final model response made the strict
+end-to-end score 19/20. A strong 319-line tmux wrapper also reached two calls
+and used 9.2% fewer tokens than Awaitless—the value there is the built-in,
+maintained protocol rather than a universal token advantage.
+
+Read the [full Agent report](metric/results/deepseek-agent-v2-report.md), the
+[benchmark methodology](metric/README.md), and the separate
+[SSH polling experiment with raw results](benchmarks/README.md).
 
 ## Try the recovery story in 30 seconds
 

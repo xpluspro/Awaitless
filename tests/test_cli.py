@@ -106,11 +106,11 @@ class CLITest(unittest.TestCase):
         self.assertTrue(value["detached"])
         self.assertEqual(value["detach_reason"], "inline_timeout")
         self.assertIn(value["state"], {"starting", "running", "stalled"})
-        self.assertEqual(value["stdout_tail"], "started\n")
         final = json.loads(
             self.run_cli("wait", value["job_id"], "--json").stdout
         )
         self.assertEqual(final["state"], "succeeded")
+        self.assertEqual(final["stdout_tail"], "started\n")
 
     def test_adaptive_run_uses_operator_default_queue(self) -> None:
         self.run_cli("queue", "create", "gpu0", "--concurrency", "1", "--json")

@@ -17,29 +17,25 @@ Awaitless 位于 Coding Agent 与计算资源之间，对上提供一套自适�
 [English](README.md) · [完整文档](docs/README.md) ·
 [Benchmark](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
 
-## 真实 Agent 工作负载实测
+## 一套任务生命周期，复用已有计算设施
 
-| 结果 | 普通 tmux / 轮询 | Awaitless |
-|---|---:|---:|
-| 20 个配对 Agent 案例的中位工具调用 | 7 | **2（减少 71.4%）** |
-| 每个正确任务的 API usage token | 25,974.2 | **3,820.8（减少 85.3%）** |
-| 一次真实 SSH 轮询任务的 Agent 可见调用 | 13 | **2** |
+```text
+Coding Agent → 提交工作 → Awaitless 管理任务生命周期 → Local / SSH / Slurm
+```
 
-Agent 实验于 2026-08-10 使用相同的 DeepSeek 模型、提示词、工作负载和随机 seed。
-Awaitless 在 20/20 个案例中都正确返回了状态、退出码、Artifact 和日志契约；其中一次
-模型最终回复为空，因此严格端到端得分为 19/20。一个 319 行的增强 tmux wrapper
-也做到了两次调用，并比 Awaitless 少用 9.2% token——面对这条强基线，Awaitless
-的价值是内置且有人维护的统一协议，而不是声称永远更省 token。
+| 持久任务 | 命名稀缺资源队列 | 完成与恢复 |
+|---|---|---|
+| 稳定 ID、状态、取消、有限日志与 Artifact 不因客户端断开而丢失。 | 持久 FIFO 准入控制，避免过多任务同时进入同一个命名资源。 | 退出码与结果可凭 Job ID 或可重放 completion cursor 在新会话取回。 |
 
-查看[完整 Agent 报告](metric/results/deepseek-agent-v2-report.md)、
-[benchmark 方法论](metric/README.md)，以及另一项带原始结果的
-[SSH 轮询实验](benchmarks/README.md)。
+Awaitless 管理的是**任务生命周期**，不是硬件资源。它不发现 GPU、不理解设备拓扑，
+也不做多资源分配或取代集群调度器。Operator 只需命名队列并设置固定并发；
+`--gpus 2 --mem 64G` 这类资源申请与物理集群调度仍由 Slurm 负责。
 
 ![Awaitless SSH 提交、断开、恢复与 Artifact 演示](https://raw.githubusercontent.com/xpluspro/Awaitless/main/assets/awaitless-demo.gif)
 
 ## Coding Agent 应该写代码，而不是照看任务
 
-Agent 完全可以自己写 `run → sleep → check`。更难的问题是让任务身份、断线恢复、资源
+Agent 完全可以自己写 `run → sleep → check`。更难的问题是让任务身份、断线恢复、队列
 准入、取消和结果交付在长工作负载与不同 session 之间保持可靠。缺少这层执行基础设施时，
 Agent 会反复把同一份、越来越长的日志拉回上下文：
 
@@ -64,7 +60,7 @@ awaitless wait job_019F... --json
 只会 detach waiter。中断 waiter、关闭 MCP 客户端或换一个全新的 Agent 会话都不会停止
 任务，只凭稳定 job ID 就能恢复结果。
 
-## 资源还没空闲，也可以现在提交
+## 命名资源还没空闲，也可以现在排队
 
 先创建一个持久 FIFO 队列，之后立即提交所有命令：
 
@@ -76,8 +72,9 @@ awaitless submit --queue gpu0 -- python train_b.py
 awaitless submit --queue gpu0 -- python train_c.py
 ```
 
-第一条命令运行，其余任务显示 `queued`；容量释放后，下一个任务会自动启动。第一版没有
-priority 和抢占，只有固定并发与 FIFO admission，也绝不会为了后来的任务杀掉正在运行的工作。
+第一条命令运行，其余任务显示 `queued`；容量释放后，下一个任务会自动启动。这是针对
+命名稀缺资源的持久化准入控制：固定并发、FIFO 排序，没有 priority 或抢占，也绝不会
+为了后来的任务杀掉正在运行的工作。
 
 Operator 还可以在全局或 host 配置中绑定默认 queue：
 
@@ -88,6 +85,10 @@ queue = "gpu0"
 ```
 
 之后 Agent 调用 `run` 时不需要选择 queue，也不需要先探测 GPU 是否空闲。
+
+这个队列不会发现资源、理解 GPU topology、动态分配设备、签发 lease，也不能组合申请
+“两张 GPU 加 64 GB 内存”。这些职责继续交给 Slurm 或其他 Scheduler；Awaitless 负责
+包裹 Scheduler 外层、面向 Agent 的任务生命周期。
 
 ## 哪个任务先完成，就先消费哪个结果
 
@@ -108,6 +109,26 @@ awaitless completions job_A job_B job_C --after cmp_... --json
 在仓库内可复现的三 Job 确定性协议案例中，逐 Job polling 与取回结果用了 13 次 Agent 可见
 CLI 调用，completion feed 使用 6 次。它是协议 benchmark，不代表模型或 token 结论。参见
 [方法和原始结果](benchmarks/README.md#multi-job-completion-benchmark)。
+
+## 真实 Agent 工作负载实测
+
+这些结果说明一套有人维护的执行协议为什么有用；减少工具调用和 token 是证据，不是产品品类。
+
+| 结果 | 普通 tmux / 轮询 | Awaitless |
+|---|---:|---:|
+| 20 个配对 Agent 案例的中位工具调用 | 7 | **2（减少 71.4%）** |
+| 每个正确任务的 API usage token | 25,974.2 | **3,820.8（减少 85.3%）** |
+| 一次真实 SSH 轮询任务的 Agent 可见调用 | 13 | **2** |
+
+Agent 实验于 2026-08-10 使用相同的 DeepSeek 模型、提示词、工作负载和随机 seed。
+Awaitless 在 20/20 个案例中都正确返回了状态、退出码、Artifact 和日志契约；其中一次
+模型最终回复为空，因此严格端到端得分为 19/20。一个 319 行的增强 tmux wrapper
+也做到了两次调用，并比 Awaitless 少用 9.2% token——面对这条强基线，Awaitless
+的价值是内置且有人维护的统一协议，而不是声称永远更省 token。
+
+查看[完整 Agent 报告](metric/results/deepseek-agent-v2-report.md)、
+[benchmark 方法论](metric/README.md)，以及另一项带原始结果的
+[SSH 轮询实验](benchmarks/README.md)。
 
 ## 30 秒体验断线恢复
 

@@ -107,7 +107,10 @@ def _submit_task(arguments: RunJobArguments) -> dict[str, Any]:
 server = MCPServer(
     name="awaitless",
     title="Awaitless",
-    description="Adaptive durable execution and resource queues for coding agents across local, SSH, and Slurm",
+    description=(
+        "Adaptive durable execution and named concurrency queues for coding agents "
+        "across local, SSH, and Slurm"
+    ),
     instructions=(
         "Use run as the default for non-interactive commands: quick work returns inline, "
         "while longer work automatically returns a durable Job handle. "
