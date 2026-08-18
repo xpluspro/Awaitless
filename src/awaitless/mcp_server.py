@@ -108,8 +108,8 @@ server = MCPServer(
     name="awaitless",
     title="Awaitless",
     description=(
-        "Adaptive durable execution and named concurrency queues for coding agents "
-        "across local, SSH, and Slurm"
+        "Durable execution and named concurrency queues for coding agents across "
+        "local, SSH, and Slurm"
     ),
     instructions=(
         "Use run as the default for non-interactive commands: quick work returns inline, "
