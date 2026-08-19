@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import re
@@ -135,6 +136,7 @@ class Service:
         log_dir: str | None = None,
         backend_options: dict[str, Any] | None = None,
         client_request_id: str | None = None,
+        client_session: str | None = None,
         mcp_task_ttl_ms: int | None = None,
         queue_name: str | None = None,
         device: str | None = None,
@@ -242,6 +244,7 @@ class Service:
         metadata = {
             "job_id": job_id,
             "client_request_id": client_request_id,
+            "client_session": client_session,
             "name": name,
             "backend": backend,
             "host": host,
@@ -279,6 +282,7 @@ class Service:
         }
         values = {
             "job_id": job_id,
+            "client_session": client_session,
             "name": name,
             "backend": backend,
             "host": host,
@@ -299,7 +303,9 @@ class Service:
             "capture_logs_json": json.dumps(capture_logs),
             "resources_json": json.dumps(resources),
             "environment_json": json.dumps(self._environment_snapshot(env)),
-            "phase": "queued" if queue_name else "starting",
+            # Phase is reserved for command-reported AWAITLESS_PHASE markers.
+            # Lifecycle and queue admission are exposed separately.
+            "phase": None,
         }
         if client_request_id is not None:
             fingerprint = _submission_fingerprint(
@@ -311,6 +317,7 @@ class Service:
                 timeout_seconds=timeout_seconds,
                 stall_timeout_seconds=stall_timeout_seconds,
                 name=name,
+                client_session=client_session,
                 artifacts=artifacts,
                 log_dir=str(log_root) if log_root else None,
                 backend_options=backend_options or {},
@@ -374,38 +381,79 @@ class Service:
         return result
 
     def doctor_remote(
-        self, host: str, *, cwd: str | None = None, devices: list[str] | None = None
+        self,
+        host: str,
+        *,
+        cwd: str | None = None,
+        devices: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        sources: list[str] | None = None,
+        user_group: str | None = None,
+        require_flock: bool = False,
     ) -> dict[str, Any]:
         """Run a bounded, machine-readable prerequisite check on an SSH target."""
         backend = self.backends["ssh"]
         checks: list[dict[str, Any]] = []
         checks.append({"name": "cwd", "ok": True, "required": False})
-        script = "set +e\n"
-        script += "printf 'PATH=%s\\n' \"$PATH\"\n"
-        for name, command in (("bash", "bash"), ("cmake", "cmake"), ("npu_smi", "npu-smi"), ("python", "python3")):
-            script += f"command -v {command} >/dev/null 2>&1; echo CHECK_{name}=$?\n"
+        env = dict(env or {})
+        sources = list(sources or [])
+        for key in env:
+            if not ENV_NAME.fullmatch(key):
+                raise AwaitlessError(f"invalid environment variable name: {key!r}")
+        if user_group and not re.fullmatch(r"[A-Za-z0-9_.-]+", user_group):
+            raise AwaitlessError("user group contains unsupported characters")
+        body = "set +e\n"
         if cwd:
-            script += f"test -d {shlex.quote(cwd)}; echo CHECK_cwd=$?\n"
-            script += f"test -r {shlex.quote(cwd)} -a -x {shlex.quote(cwd)}; echo CHECK_permissions=$?\n"
-            script += f"df -Pk {shlex.quote(cwd)} 2>/dev/null | awk 'NR==2 {{print \"DISK_KB=\" $4}}'\n"
-        script += "if [ -n \"${ASCEND_HOME_PATH:-}\" ] || [ -d /usr/local/Ascend ]; then echo CHECK_cann=0; else echo CHECK_cann=1; fi\n"
+            body += f"cd -- {shlex.quote(cwd)} 2>/dev/null; echo CHECK_cwd=$?\n"
+        for source in sources:
+            body += f". {shlex.quote(str(source))} 2>/dev/null; echo CHECK_source_{len(checks)}=$?\n"
+            checks.append({"name": f"source:{source}", "ok": True, "required": True, "value_key": f"CHECK_source_{len(checks)}"})
+        for key, value in env.items():
+            body += f"export {key}={shlex.quote(str(value))}\n"
+        body += "printf 'PATH=%s\\n' \"$PATH\"\n"
+        for name, command in (("bash", "bash"), ("cmake", "cmake"), ("npu_smi", "npu-smi"), ("python", "python3")):
+            body += f"command -v {command} >/dev/null 2>&1; echo CHECK_{name}=$?\n"
+        body += "command -v flock >/dev/null 2>&1; echo CHECK_flock=$?\n"
+        if cwd:
+            body += "test -r . -a -x .; echo CHECK_permissions=$?\n"
+            body += "df -Pk . 2>/dev/null | awk 'NR==2 {print \"DISK_KB=\" $4}'\n"
+        body += "if [ -n \"${ASCEND_INSTALL_ROOT:-${ASCEND_HOME_PATH:-}}\" ] || [ -d /usr/local/Ascend ]; then echo CHECK_cann=0; else echo CHECK_cann=1; fi\n"
         if devices:
-            script += "npu_tmp=/tmp/awaitless-npu-smi.$$; if command -v npu-smi >/dev/null 2>&1; then npu-smi info >\"$npu_tmp\" 2>&1; echo NPU_RC=$?; else : >\"$npu_tmp\"; echo NPU_RC=127; fi\n"
+            body += "npu_tmp=/tmp/awaitless-npu-smi.$$; if command -v npu-smi >/dev/null 2>&1; then npu-smi info >\"$npu_tmp\" 2>&1; echo NPU_RC=$?; else : >\"$npu_tmp\"; echo NPU_RC=127; fi\n"
             for device in devices:
                 if not device.isdigit():
                     raise AwaitlessError("devices must be comma-separated numeric IDs")
-                script += f"grep -Eq '(^|[^0-9]){device}([^0-9]|$)' \"$npu_tmp\"; echo CHECK_device_{device}=$?\n"
-            script += "rm -f \"$npu_tmp\"\n"
+                body += f"grep -Eq '(^|[^0-9]){device}([^0-9]|$)' \"$npu_tmp\"; echo CHECK_device_{device}=$?\n"
+            body += "rm -f \"$npu_tmp\"\n"
+        script = body
+        if user_group:
+            encoded = base64.b64encode(body.encode()).decode()
+            script = (
+                "set +e\n"
+                f"command -v sg >/dev/null 2>&1; echo CHECK_sg=$?\n"
+                f"id -Gn | tr ' ' '\\n' | grep -Fx {shlex.quote(user_group)} >/dev/null; echo CHECK_group=$?\n"
+                f"printf %s {shlex.quote(encoded)} | base64 -d | sg {shlex.quote(user_group)} -c 'bash -s'\n"
+                "echo SG_RC=$?\n"
+            )
         try:
             output = backend._invoke(host, script, timeout=15)  # type: ignore[attr-defined]
         except SSHError as exc:
             return {"ok": False, "host": host, "stage": "connection", "reason": "ssh_unreachable", "suggestion": "Check SSH credentials, hostname and network.", "error": str(exc), "checks": checks}
         values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        for item in checks:
+            if item.get("value_key"):
+                item["ok"] = values.get(item.pop("value_key")) == "0"
         for name in ("bash", "cmake", "npu_smi", "python"):
             value = values.get(f"CHECK_{name}")
             required = name in {"bash", "cmake", "python"} or bool(devices) and name == "npu_smi"
             checks.append({"name": "npu-smi" if name == "npu_smi" else name, "ok": value == "0" or not required, "required": required})
         checks.append({"name": "CANN", "ok": values.get("CHECK_cann") == "0", "required": bool(devices)})
+        checks.append({"name": "flock", "ok": values.get("CHECK_flock") == "0" or not require_flock, "required": require_flock})
+        if user_group:
+            checks.extend((
+                {"name": "sg", "ok": values.get("CHECK_sg") == "0", "required": True},
+                {"name": f"group:{user_group}", "ok": values.get("CHECK_group") == "0" and values.get("SG_RC") == "0", "required": True},
+            ))
         if cwd and "CHECK_cwd" in values:
             checks.append({"name": "cwd_exists", "ok": values["CHECK_cwd"] == "0", "required": True})
             checks.append({"name": "cwd_permissions", "ok": values.get("CHECK_permissions") == "0", "required": True})
@@ -413,7 +461,7 @@ class Service:
             checks.append({"name": f"device_{device}_visible", "ok": values.get(f"CHECK_device_{device}") == "0", "required": True})
         ok = all(item["ok"] for item in checks if item.get("required", True))
         failed = next((item["name"] for item in checks if not item["ok"]), None)
-        return {"ok": ok, "host": host, "stage": None if ok else "preflight_failed", "reason": None if ok else f"missing_or_invalid_{failed}", "suggestion": None if ok else "Install the missing tool or select a compatible cwd/device.", "checks": checks, "path": values.get("PATH"), "disk_available_kb": int(values["DISK_KB"]) if values.get("DISK_KB", "").isdigit() else None}
+        return {"ok": ok, "host": host, "cwd": cwd, "stage": None if ok else "preflight_failed", "reason": None if ok else f"missing_or_invalid_{failed}", "suggestion": None if ok else "Fix the reported tool, profile, group, cwd, or device check, then retry.", "checks": checks, "execution_profile": {"sources": sources, "user_group": user_group, "env_names": sorted(env)}, "path": values.get("PATH"), "disk_available_kb": int(values["DISK_KB"]) if values.get("DISK_KB", "").isdigit() else None}
 
     def require(self, job_id: str) -> dict[str, Any]:
         job = self.store.get(job_id)
@@ -522,14 +570,31 @@ class Service:
         atomic_json(recent, entries[:50])
 
     def recover_last(self) -> dict[str, Any]:
+        return self.recover_last_filtered()
+
+    def recover_last_filtered(self, **filters: str | None) -> dict[str, Any]:
         path = self.settings.data_dir / "recent-jobs.json"
         if not path.is_file():
             raise AwaitlessError("no detached jobs have been recorded")
         entries = json.loads(path.read_text(encoding="utf-8"))
-        if not entries:
-            raise AwaitlessError("no detached jobs have been recorded")
-        job_id = entries[0].get("job_id")
-        return self.status(job_id) if job_id else entries[0]
+        normalized = {key: value for key, value in filters.items() if value is not None}
+        matches: list[tuple[int, dict[str, Any]]] = []
+        for index, entry in enumerate(entries):
+            job = self.store.get(entry.get("job_id")) if entry.get("job_id") else None
+            if job and all(str(job.get(key) or "") == value for key, value in normalized.items()):
+                matches.append((index, job))
+        if not matches:
+            criteria = ", ".join(f"{key}={value!r}" for key, value in normalized.items()) or "the recent-job list"
+            raise AwaitlessError(f"no detached job matches {criteria}")
+        index, job = matches[0]
+        result = self.status(job["job_id"])
+        result["selected_by"] = {
+            "source": "recent_jobs",
+            "recent_index": index,
+            "filters": normalized,
+            "candidate_count": len(matches),
+        }
+        return result
 
     def completions(
         self,
@@ -807,7 +872,34 @@ class Service:
                 self.backends[job["backend"]].refresh(job)  # type: ignore[attr-defined]
             except Exception:
                 pass
-        return self.store.list_queues()
+        summaries = self.store.list_queues()
+        for summary in summaries:
+            jobs = self.store.list(queue_name=summary["name"])
+            queued = sorted((job for job in jobs if job["state"] == "queued"), key=lambda item: (item.get("queue_order") or 0, item["created_at"], item["job_id"]))
+            durations = [
+                (parse_time(job["finished_at"]) - parse_time(job["started_at"])).total_seconds()
+                for job in jobs
+                if parse_time(job.get("started_at")) and parse_time(job.get("finished_at"))
+            ]
+            average = sum(durations) / len(durations) if durations else None
+            concurrency = int(summary["concurrency"])
+            summary["running_jobs"] = summary.get("active_jobs", 0)
+            free_slots = max(0, concurrency - int(summary["running_jobs"]))
+            summary["average_runtime_seconds"] = round(average, 3) if average is not None else None
+            summary["waiting_jobs"] = [
+                {
+                    "job_id": job["job_id"],
+                    "name": job.get("name"),
+                    "position": position,
+                    "estimated_wait_seconds": round(
+                        average * max(0, (position - free_slots + concurrency - 1) // concurrency),
+                        3,
+                    ) if average is not None else None,
+                }
+                for position, job in enumerate(queued, start=1)
+            ]
+            summary["estimated_wait_seconds"] = summary["waiting_jobs"][0]["estimated_wait_seconds"] if summary["waiting_jobs"] else 0.0
+        return summaries
 
     def _reconcile_local_queue(
         self, queue_name: str, *, exclude: str | None = None
@@ -868,7 +960,7 @@ class Service:
             "capture_logs": job.get("capture_logs", []),
             "resources": job.get("resources", {}),
             "environment_snapshot": job.get("environment_snapshot", {}),
-            "phase": job.get("phase"),
+            "raw_phase": job.get("phase"),
             "queue_order": job.get("queue_order"),
             "events": self.store.events(job_id),
             "error": job["error"],
@@ -889,14 +981,22 @@ class Service:
                     declarations.append((declared, cwd / declared, None))
             else:
                 path = Path(declared)
-                declarations.append((declared, path if path.is_absolute() else cwd / path, None))
+                resolved = path if path.is_absolute() else cwd / path
+                if resolved.is_dir():
+                    declarations.extend(
+                        (str(match), match, declared)
+                        for match in sorted(resolved.rglob("*"))
+                        if match.is_file()
+                    )
+                else:
+                    declarations.append((declared, resolved, None))
         for declared, resolved, pattern in declarations:
             item: dict[str, Any] = {"path": declared, "exists": resolved.is_file()}
             if pattern:
                 item["declared_path"] = pattern
             if resolved.is_file():
                 stat = resolved.stat()
-                item.update(size_bytes=stat.st_size, modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"))
+                item.update(size_bytes=stat.st_size, sha256=_sha256_file(resolved), modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"))
                 if resolved.suffix.lower() == ".json" and stat.st_size <= self.settings.max_return_bytes:
                     try:
                         item["content"] = json.loads(resolved.read_text(encoding="utf-8"))
@@ -911,7 +1011,10 @@ class Service:
             return job
         candidates = [parse_time(job["started_at"]).timestamp() if parse_time(job["started_at"]) else 0]
         if job["backend"] in {"ssh", "slurm"}:
-            candidates.append(parse_time(job.get("last_output_at")).timestamp() if parse_time(job.get("last_output_at")) else 0)
+            candidates.extend(
+                parse_time(job.get(key)).timestamp() if parse_time(job.get(key)) else 0
+                for key in ("last_output_at", "last_heartbeat_at")
+            )
         else:
             candidates.extend(
                 Path(job[key]).stat().st_mtime if Path(job[key]).exists() else 0
@@ -956,7 +1059,7 @@ class Service:
         mtimes = [path.stat().st_mtime for path in (stdout, stderr) if path.exists() and path.stat().st_size]
         local_last_output = datetime.fromtimestamp(max(mtimes), timezone.utc).isoformat().replace("+00:00", "Z") if mtimes else None
         return {
-            "job_id": job["job_id"], "client_request_id": job.get("client_request_id"),
+            "job_id": job["job_id"], "client_request_id": job.get("client_request_id"), "client_session": job.get("client_session"),
             "name": job["name"], "backend": job["backend"], "host": job["host"],
             "state": job["state"], "pid": job["pid"], "backend_id": job["backend_id"],
             "created_at": created.isoformat().replace("+00:00", "Z") if created else job["created_at"], "updated_at": job["updated_at"],
@@ -967,11 +1070,15 @@ class Service:
             "device_mode": job.get("device_mode"),
             "resources": job.get("resources", {}),
             "phase": (
-                "completed"
-                if job["state"] in TERMINAL_STATES and job.get("phase") in {None, "queued", "starting", "running"}
-                else job.get("phase") or job["state"]
+                job.get("phase")
+                if job.get("phase") not in {None, "queued", "starting", "running", "completed"}
+                else "unknown"
             ),
-            "heartbeat_at": job.get("last_output_at") or job.get("updated_at"),
+            "queue_state": "running" if job.get("started_at") else ("queued" if job.get("queue_name") else "running"),
+            "last_heartbeat_at": job.get("last_heartbeat_at"),
+            # Compatibility alias. Unlike earlier releases this is never inferred
+            # from output or generic database updates.
+            "heartbeat_at": job.get("last_heartbeat_at"),
             "queue_wait_seconds": round(queue_wait, 3) if queue_wait is not None else None,
             "elapsed_seconds": round(elapsed, 3),
             "duration_seconds": round(duration, 3) if duration is not None else None,
@@ -982,6 +1089,14 @@ class Service:
             "backend_connected": True,
             "error": job["error"],
         }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _submission_fingerprint(**values: Any) -> str:

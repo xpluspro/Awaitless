@@ -71,10 +71,14 @@ class SSHRefreshRaceTest(unittest.TestCase):
                     refreshed = backend.refresh(store.get("job_heartbeat") or {})
                 self.assertEqual(refreshed["state"], "running")
                 self.assertIsNone(refreshed["error"])
+                self.assertIsNotNone(refreshed["last_heartbeat_at"])
+                self.assertIsNone(refreshed["last_output_at"])
             finally:
                 store.close()
 
     def test_completion_marker_grace_avoids_false_lost_state(self) -> None:
+        if not Path("/proc/self/stat").is_file():
+            self.skipTest("requires Linux /proc race fixture")
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             remote_home = root / "remote-home"

@@ -117,6 +117,7 @@ awaitless run --json -- ninja -C build
 awaitless submit --json --name build -- ninja -C build
 awaitless wait <job-id> --json
 awaitless wait --last --json
+awaitless wait --last --name benchmark --cwd /workspace/project --host zhiyuan --client-session agent-42 --json
 awaitless completions <job-a> <job-b> --json
 awaitless status <job-id> --json
 awaitless logs <job-id> --tail 200 --json
@@ -189,7 +190,11 @@ when `--timeout` expires and `complete` after a terminal result is collected.
 `delivery_state` is `pending` for a detached/non-terminal response and
 `delivered` for a terminal `wait` response. A client-side wait timeout never
 cancels the managed job. `awaitless wait --last --json` resolves the most
-recent detached job recorded by the local client.
+recent detached job recorded by the local client. Add `--name`, `--cwd`,
+`--host`, or `--client-session` to constrain selection. The result includes
+`selected_by` with the filters and recent-list position used. A client session
+can be attached to `run`/`submit` with `--client-session` or
+`AWAITLESS_CLIENT_SESSION`.
 
 `logs --grep REGEX` filters each bounded stdout/stderr tail by matching lines;
 JSON responses include the original `grep` expression. It is intended for
@@ -297,7 +302,9 @@ both claim the same capacity. The default remote location is
 Independent clients with different `AWAITLESS_DATA_DIR` values each define the
 same queue locally; the first SSH submission fixes its remote concurrency and a
 mismatch is rejected. `queue list` counts only jobs known to the current local
-data store, while admission on the target still includes every remote client.
+data store and reports running/queued totals, FIFO positions, and an estimated
+wait based on completed jobs' average runtime. With no runtime samples, the ETA
+is `null`. Admission on the target still includes every remote client.
 
 Detached local and SSH wrappers wait for admission and start the next job, so no
 Awaitless daemon or waiting Agent is required. SSH slot locks are released by
@@ -519,7 +526,17 @@ Start with:
 awaitless doctor --json
 awaitless inspect <job-id> --json
 awaitless doctor --host zhiyuan --cwd /workspace/project --devices 4,5,6,7 --json
+awaitless doctor --host zhiyuan --cwd /workspace/project \
+  --user-group HwHiAiUser --source scripts/env.sh \
+  --env ASCEND_INSTALL_ROOT=/usr/local/Ascend --queue --json
 awaitless submit-group --group tuning --host zhiyuan --devices 4,5,6,7 --artifact 'artifacts/*.json' -- ./run_benchmark.sh
+
+`doctor` applies `--user-group`, `--source`, and `--env` in the same order as
+the SSH execution wrapper. Host entries may define reusable `user_group`,
+`sources`, and `env` values; command-line environment values override the host
+profile. `--queue` additionally requires `flock`, matching remote queue
+submission. The JSON result includes the effective profile and individual
+group, source, toolchain, CANN, device, and `flock` checks.
 awaitless wait-group tuning --json
 awaitless completions --group tuning --json
 awaitless logs <job-id> --tail 200 --json

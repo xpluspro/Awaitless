@@ -37,6 +37,8 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--host")
     run.add_argument("--cwd")
     run.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    run.add_argument("--source", action="append", default=[], metavar="PATH", help="source a remote shell profile before execution")
+    run.add_argument("--user-group", help="run the remote wrapper through sg(1)")
     run.add_argument("--device", help="Ascend device ID; enables device visibility and exclusive scheduling")
     run.add_argument("--device-mode", choices=["physical", "native"], default="physical")
     run.add_argument("--timeout")
@@ -61,6 +63,7 @@ def parser() -> argparse.ArgumentParser:
         "--client-request-id",
         help="idempotency key; a retry with identical parameters returns the original job",
     )
+    run.add_argument("--client-session", help="client/agent session identity for safe --last recovery")
     run.add_argument("--json", action="store_true")
     run.add_argument("command", nargs=argparse.REMAINDER)
 
@@ -69,6 +72,8 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--host")
     submit.add_argument("--cwd")
     submit.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    submit.add_argument("--source", action="append", default=[], metavar="PATH", help="source a remote shell profile before execution")
+    submit.add_argument("--user-group", help="run the remote wrapper through sg(1)")
     submit.add_argument("--device", help="Ascend device ID; enables device visibility and exclusive scheduling")
     submit.add_argument("--device-mode", choices=["physical", "native"], default="physical")
     submit.add_argument("--timeout")
@@ -92,6 +97,7 @@ def parser() -> argparse.ArgumentParser:
         "--client-request-id",
         help="idempotency key; a retry with identical parameters returns the original job",
     )
+    submit.add_argument("--client-session", help="client/agent session identity for safe --last recovery")
     submit.add_argument("--json", action="store_true")
     submit.add_argument("command", nargs=argparse.REMAINDER)
 
@@ -121,6 +127,10 @@ def parser() -> argparse.ArgumentParser:
     wait = commands.add_parser("wait", help="block until a job reaches a terminal state")
     wait.add_argument("job_id", nargs="?", help="job ID (omit when using --last)")
     wait.add_argument("--last", action="store_true", help="wait for the most recently detached job")
+    wait.add_argument("--name", help="filter --last by job name")
+    wait.add_argument("--cwd", help="filter --last by working directory")
+    wait.add_argument("--host", help="filter --last by host")
+    wait.add_argument("--client-session", help="filter --last by client/agent session")
     wait.add_argument("--timeout")
     wait.add_argument("--progress-interval", help="emit structured heartbeat updates to stderr")
     wait.add_argument("--json", action="store_true")
@@ -176,6 +186,10 @@ def parser() -> argparse.ArgumentParser:
     doctor.add_argument("--host")
     doctor.add_argument("--cwd")
     doctor.add_argument("--devices", help="comma-separated device IDs")
+    doctor.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    doctor.add_argument("--source", action="append", default=[], metavar="PATH")
+    doctor.add_argument("--user-group")
+    doctor.add_argument("--queue", action="store_true", help="require remote queue prerequisites such as flock")
     doctor.add_argument("--json", action="store_true")
     recover = commands.add_parser("recover", help="recover the most recently detached job")
     recover.add_argument("--last", action="store_true", required=True)
@@ -239,14 +253,15 @@ def _human_job(job: dict[str, Any]) -> str:
 
 
 def _human_queue(queue: dict[str, Any]) -> str:
-    return "\t".join(
-        (
-            str(queue["name"]),
-            f"concurrency={queue['concurrency']}",
-            f"queued={queue.get('queued_jobs', 0)}",
-            f"active={queue.get('active_jobs', 0)}",
-        )
-    )
+    fields = [
+        str(queue["name"]),
+        f"concurrency={queue['concurrency']}",
+        f"queued={queue.get('queued_jobs', 0)}",
+        f"active={queue.get('active_jobs', queue.get('running_jobs', 0))}",
+    ]
+    if queue.get("estimated_wait_seconds") is not None:
+        fields.append(f"eta={queue['estimated_wait_seconds']}s")
+    return "\t".join(fields)
 
 
 def _human_completion(completion: dict[str, Any]) -> str:
@@ -460,13 +475,21 @@ def main(argv: list[str] | None = None) -> int:
                     host=host,
                     explicit_queue=queue,
                 )
+            host_profile = settings.hosts.get(host, {}) if host else {}
+            backend_options = _slurm_options(args.slurm_option)
+            if backend == "ssh":
+                backend_options.update(
+                    sources=args.source or host_profile.get("sources", []),
+                    user_group=args.user_group or host_profile.get("user_group"),
+                )
             result = service.submit(
                 job_id=new_job_id(), command=command, backend=backend, host=host, cwd=args.cwd,
-                env=_env(args.env), timeout_seconds=parse_duration(args.timeout),
+                env={**host_profile.get("env", {}), **_env(args.env)}, timeout_seconds=parse_duration(args.timeout),
                 stall_timeout_seconds=parse_duration(args.stall_timeout), name=args.name,
                 artifacts=args.artifact, log_dir=args.log_dir,
-                backend_options=_slurm_options(args.slurm_option),
+                backend_options=backend_options,
                 client_request_id=args.client_request_id,
+                client_session=args.client_session or os.environ.get("AWAITLESS_CLIENT_SESSION"),
                 queue_name=queue,
                 device=args.device,
                 device_mode=args.device_mode,
@@ -514,13 +537,22 @@ def main(argv: list[str] | None = None) -> int:
             _print(service.recover_last(), True, quiet=args.quiet)
             return 0
         if args.action == "wait":
+            selected_by = None
             if args.last:
                 if args.job_id:
                     raise AwaitlessError("a job ID cannot be combined with --last")
-                recent = service.recover_last()
+                recent = service.recover_last_filtered(
+                    name=args.name,
+                    cwd=str(Path(args.cwd).expanduser().resolve()) if args.cwd else None,
+                    host=args.host,
+                    client_session=args.client_session or os.environ.get("AWAITLESS_CLIENT_SESSION"),
+                )
                 args.job_id = recent["job_id"]
+                selected_by = recent["selected_by"]
             elif not args.job_id:
                 raise AwaitlessError("a job ID is required unless --last is used")
+            elif any((args.name, args.cwd, args.host, args.client_session)):
+                raise AwaitlessError("--name, --cwd, --host, and --client-session require --last")
             progress = parse_duration(args.progress_interval)
             deadline = parse_duration(args.timeout)
             if progress is not None and progress <= 0:
@@ -538,6 +570,8 @@ def main(argv: list[str] | None = None) -> int:
                     break
             else:
                 result, wait_timed_out = service.wait(args.job_id, deadline)
+            if selected_by is not None:
+                result["selected_by"] = selected_by
             _print(result, json_mode, quiet=args.quiet)
             return 4 if wait_timed_out else EXIT_CODES.get(result["state"], 1)
         if args.action == "completions":
@@ -656,7 +690,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "doctor":
             if args.host:
                 devices = [item.strip() for item in (args.devices or "").split(",") if item.strip()]
-                result = service.doctor_remote(args.host, cwd=args.cwd, devices=devices or None)
+                host_profile = settings.hosts.get(args.host, {})
+                result = service.doctor_remote(
+                    args.host,
+                    cwd=args.cwd,
+                    devices=devices or None,
+                    env={**host_profile.get("env", {}), **_env(args.env)},
+                    sources=args.source or host_profile.get("sources", []),
+                    user_group=args.user_group or host_profile.get("user_group"),
+                    require_flock=args.queue or bool(host_profile.get("queue")),
+                )
                 _print(result, json_mode, quiet=args.quiet)
                 return 0 if result["ok"] else 1
             configured_backends = {
@@ -708,7 +751,10 @@ def main(argv: list[str] | None = None) -> int:
             _error(f"preflight failed: {exc}", False)
         return 2
     except SSHError as exc:
-        _error(str(exc), json_mode)
+        if json_mode:
+            print(json.dumps(exc.as_dict(), ensure_ascii=False, separators=(",", ":")), file=sys.stderr)
+        else:
+            _error(str(exc), False)
         return 7
     except (AwaitlessError, ValueError) as exc:
         _error(str(exc), json_mode)

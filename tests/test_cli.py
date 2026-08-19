@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,15 @@ class CLITest(unittest.TestCase):
             encoding="utf-8",
         )
         fake_ssh.chmod(0o755)
+        fake_setsid = fake_bin / "setsid"
+        fake_setsid.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "os.setsid()\n"
+            "os.execvp(sys.argv[1], sys.argv[1:])\n",
+            encoding="utf-8",
+        )
+        fake_setsid.chmod(0o755)
         remote_home = Path(self.temp.name) / "remote-home"
         remote_home.mkdir()
         self.env["PATH"] = str(fake_bin) + os.pathsep + self.env["PATH"]
@@ -121,6 +131,26 @@ class CLITest(unittest.TestCase):
         self.assertEqual(final["delivery_state"], "delivered")
         self.assertEqual(final["stdout_tail"], "started\n")
 
+    def test_status_separates_lifecycle_queue_phase_and_output(self) -> None:
+        self.run_cli("queue", "create", "phase-test", "--concurrency", "1", "--json")
+        value = json.loads(
+            self.run_cli(
+                "submit", "--queue", "phase-test", "--json", "--",
+                sys.executable, "-c",
+                "import time; print('output', flush=True); time.sleep(.2)",
+            ).stdout
+        )
+        status = json.loads(self.run_cli("status", value["job_id"], "--json").stdout)
+        self.assertIn(status["state"], {"queued", "starting", "running", "succeeded"})
+        self.assertIn(status["queue_state"], {"queued", "running"})
+        self.assertEqual(status["phase"], "unknown")
+        self.assertIsNone(status["last_heartbeat_at"])
+        self.assertIsNone(status["heartbeat_at"])
+        final = json.loads(self.run_cli("wait", value["job_id"], "--json").stdout)
+        self.assertEqual(final["phase"], "unknown")
+        inspected = json.loads(self.run_cli("inspect", value["job_id"], "--json").stdout)
+        self.assertIsNone(inspected["raw_phase"])
+
     def test_wait_last_recovers_most_recent_detached_job(self) -> None:
         value = json.loads(
             self.run_cli(
@@ -131,6 +161,40 @@ class CLITest(unittest.TestCase):
         final = json.loads(self.run_cli("wait", "--last", "--json").stdout)
         self.assertEqual(final["job_id"], value["job_id"])
         self.assertEqual(final["state"], "succeeded")
+        self.assertEqual(final["selected_by"]["source"], "recent_jobs")
+
+    def test_wait_last_filters_by_session_name_and_cwd(self) -> None:
+        first_cwd = Path(self.temp.name) / "first-session"
+        second_cwd = Path(self.temp.name) / "second-session"
+        first_cwd.mkdir()
+        second_cwd.mkdir()
+        first = json.loads(
+            self.run_cli(
+                "run", "--inline-timeout", "0.01s", "--name", "target",
+                "--client-session", "agent-a", "--cwd", str(first_cwd), "--json", "--",
+                sys.executable, "-c", "import time; time.sleep(.15)",
+            ).stdout
+        )
+        second = json.loads(
+            self.run_cli(
+                "run", "--inline-timeout", "0.01s", "--name", "other",
+                "--client-session", "agent-b", "--cwd", str(second_cwd), "--json", "--",
+                sys.executable, "-c", "import time; time.sleep(.15)",
+            ).stdout
+        )
+        selected = json.loads(
+            self.run_cli(
+                "wait", "--last", "--name", "target", "--client-session", "agent-a",
+                "--cwd", str(first_cwd), "--json",
+            ).stdout
+        )
+        self.assertEqual(selected["job_id"], first["job_id"])
+        self.assertEqual(selected["selected_by"]["recent_index"], 1)
+        self.assertEqual(
+            selected["selected_by"]["filters"],
+            {"name": "target", "cwd": str(first_cwd.resolve()), "client_session": "agent-a"},
+        )
+        self.run_cli("wait", second["job_id"], "--json")
 
     def test_logs_grep_filters_each_stream(self) -> None:
         job = self.submit(
@@ -268,6 +332,21 @@ class CLITest(unittest.TestCase):
         )
         value = json.loads(self.run_cli("wait", job, "--json").stdout)
         self.assertEqual(sorted(item["content"]["n"] for item in value["artifacts"]), [1, 2])
+        self.assertTrue(all(len(item["sha256"]) == 64 for item in value["artifacts"]))
+
+    def test_artifact_directory_expands_to_stable_manifest(self) -> None:
+        work = Path(self.temp.name) / "directory-artifacts"
+        work.mkdir()
+        job = self.submit(
+            "bash", "-c", "mkdir -p results/nested; echo a > results/a.txt; echo b > results/nested/b.txt",
+            options=("--cwd", str(work), "--artifact", "results"),
+        )
+        value = json.loads(self.run_cli("wait", job, "--json").stdout)
+        self.assertEqual(
+            [Path(item["path"]).name for item in value["artifacts"]],
+            ["a.txt", "b.txt"],
+        )
+        self.assertTrue(all(len(item["sha256"]) == 64 for item in value["artifacts"]))
 
     def test_remote_doctor_reports_missing_cwd(self) -> None:
         self.configure_fake_ssh()
@@ -276,6 +355,30 @@ class CLITest(unittest.TestCase):
         )
         self.assertFalse(value["ok"])
         self.assertEqual(value["stage"], "preflight_failed")
+
+    def test_remote_doctor_and_job_share_source_and_env_profile(self) -> None:
+        self.configure_fake_ssh()
+        work = Path(self.temp.name) / "profile-work"
+        work.mkdir()
+        profile = work / "env.sh"
+        profile.write_text("export AWAITLESS_PROFILE_VALUE=from-profile\n", encoding="utf-8")
+        doctor = json.loads(
+            self.run_cli(
+                "doctor", "--host", "fake", "--cwd", str(work),
+                "--source", str(profile), "--env", "EXPLICIT_VALUE=from-env", "--json",
+            ).stdout
+        )
+        self.assertTrue(doctor["ok"])
+        self.assertEqual(doctor["execution_profile"]["sources"], [str(profile)])
+        job = self.submit(
+            "bash", "-c", "printf '%s %s' \"$AWAITLESS_PROFILE_VALUE\" \"$EXPLICIT_VALUE\"",
+            options=(
+                "--host", "fake", "--cwd", str(work), "--source", str(profile),
+                "--env", "EXPLICIT_VALUE=from-env",
+            ),
+        )
+        final = json.loads(self.run_cli("wait", job, "--json").stdout)
+        self.assertEqual(final["stdout_tail"], "from-profile from-env")
 
     def test_runtime_timeout_terminates_job(self) -> None:
         job = self.submit("bash", "-c", "sleep 10", options=("--timeout", "0.1s"))
@@ -567,6 +670,36 @@ class CLITest(unittest.TestCase):
         self.assertEqual(queues[0]["queued_jobs"], 0)
         self.assertEqual(queues[0]["active_jobs"], 0)
         self.assertEqual(queues[0]["total_jobs"], 3)
+
+    def test_queue_list_reports_positions_and_estimated_wait(self) -> None:
+        self.run_cli("queue", "create", "eta", "--concurrency", "1", "--json")
+
+        def submit_queued(delay: float) -> dict[str, object]:
+            return json.loads(
+                self.run_cli(
+                    "submit", "--queue", "eta", "--json", "--",
+                    sys.executable, "-c", f"import time; time.sleep({delay})",
+                ).stdout
+            )
+
+        sample = submit_queued(0.1)
+        self.run_cli("wait", str(sample["job_id"]), "--json")
+        running = submit_queued(0.4)
+        second = submit_queued(0.05)
+        third = submit_queued(0.05)
+        queues = json.loads(self.run_cli("queue", "list", "--json").stdout)
+        queue = next(item for item in queues if item["name"] == "eta")
+        self.assertEqual(queue["running_jobs"], 1)
+        self.assertEqual(queue["queued_jobs"], 2)
+        self.assertEqual([item["position"] for item in queue["waiting_jobs"]], [1, 2])
+        self.assertIsNotNone(queue["average_runtime_seconds"])
+        self.assertGreater(queue["waiting_jobs"][0]["estimated_wait_seconds"], 0)
+        self.assertGreater(
+            queue["waiting_jobs"][1]["estimated_wait_seconds"],
+            queue["waiting_jobs"][0]["estimated_wait_seconds"],
+        )
+        for item in (running, second, third):
+            self.run_cli("wait", str(item["job_id"]), "--json")
 
     def test_queue_validation_conflict_and_slurm_boundary(self) -> None:
         self.run_cli("queue", "create", "gpu", "--concurrency", "2", "--json")
@@ -906,6 +1039,8 @@ with open(lock_path, 'a') as lock:
         remote_job = remote_home / ".awaitless" / "jobs" / job
         self.assertTrue((remote_job / "pid_start_ticks").read_text().strip().isdigit())
         self.assertTrue((remote_job / "heartbeat").is_file())
+        self.assertIsNotNone(value["last_heartbeat_at"])
+        self.assertEqual(value["heartbeat_at"], value["last_heartbeat_at"])
         # v0.7 replays the captured terminal result without reconnecting.
         fail_once.touch()
         completion = json.loads(
@@ -936,6 +1071,8 @@ with open(lock_path, 'a') as lock:
         self.assertEqual(status["state"], "cancelled")
 
     def test_ssh_queue_is_enforced_on_the_remote_host(self) -> None:
+        if shutil.which("flock") is None:
+            self.skipTest("requires flock on the fake SSH host")
         remote_home = self.configure_fake_ssh()
         self.run_cli(
             "queue", "create", "gpu0", "--concurrency", "1", "--json"

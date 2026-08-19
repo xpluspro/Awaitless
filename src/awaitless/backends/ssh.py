@@ -16,7 +16,12 @@ from ..util import utc_now
 
 
 class SSHError(RuntimeError):
-    pass
+    def __init__(self, message: str, **details: Any):
+        super().__init__(message)
+        self.details = {key: value for key, value in details.items() if value is not None}
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"error": str(self), **self.details}
 
 
 def _remote_path_expression(root: str, job_id: str) -> str:
@@ -58,10 +63,31 @@ class SSHBackend:
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise SSHError(f"SSH connection to {host!r} failed: {exc}") from exc
+            raise SSHError(
+                f"SSH connection to {host!r} failed: {exc}",
+                host=host,
+                wrapper_stage="connection",
+                retryable=True,
+                suggestion="Check SSH credentials, hostname, and network connectivity, then retry.",
+            ) from exc
         if result.returncode != 0:
             detail = result.stderr.strip()[-1000:]
-            raise SSHError(f"SSH command on {host!r} failed ({result.returncode}): {detail}")
+            missing = None
+            if "require flock" in detail or "requires flock" in detail:
+                missing = "flock"
+            raise SSHError(
+                f"SSH command on {host!r} failed ({result.returncode}): {detail}",
+                host=host,
+                wrapper_stage="remote_command",
+                remote_stderr=detail,
+                missing_command=missing,
+                retryable=result.returncode == 255,
+                suggestion=(
+                    "Install util-linux so flock is on PATH in the execution profile."
+                    if missing == "flock"
+                    else "Inspect remote_stderr and verify the execution profile, permissions, and remote paths."
+                ),
+            )
         return result.stdout
 
     def submit(self, job: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
@@ -69,6 +95,9 @@ class SSHBackend:
         _, _, root = ssh_target_and_options(self.settings, job["host"])
         remote_expr = _remote_path_expression(root, job["job_id"])
         queue = spec.get("queue")
+        backend_options = spec.get("backend_options") or {}
+        user_group = backend_options.get("user_group")
+        sources = backend_options.get("sources") or []
         queue_setup = ""
         queue_admission = ""
         registration_cleanup = ""
@@ -130,8 +159,13 @@ while [ -z "$slot_fd" ]; do
         case "$candidate_ticks" in
           ''|*[!0-9]*) ;;
           *)
-            current_ticks=$(awk '{{print $22}}' "/proc/$candidate_pid/stat" 2>/dev/null || true)
-            current_state=$(awk '{{print $3}}' "/proc/$candidate_pid/stat" 2>/dev/null || true)
+            if [ -r "/proc/$candidate_pid/stat" ]; then
+              current_ticks=$(awk '{{print $22}}' "/proc/$candidate_pid/stat")
+              current_state=$(awk '{{print $3}}' "/proc/$candidate_pid/stat")
+            else
+              current_ticks=$(ps -o lstart= -p "$candidate_pid" 2>/dev/null | cksum | awk '{{print $1}}')
+              current_state=$(ps -o stat= -p "$candidate_pid" 2>/dev/null | cut -c1)
+            fi
             [ "$current_ticks" = "$candidate_ticks" ] && [ "$current_state" != "Z" ] && alive=1
             ;;
         esac
@@ -175,6 +209,15 @@ trap cleanup_registration EXIT
         cwd_line = f"cd -- {shlex.quote(spec['cwd'])}" if spec.get("cwd") else ":"
         exports = "\n".join(
             f"export {key}={shlex.quote(value)}" for key, value in spec.get("env", {}).items()
+        )
+        source_lines = "\n".join(
+            f". {shlex.quote(str(source))} 2>>\"$job_dir/stderr.log\" || source_rc=$?"
+            for source in sources
+        )
+        launch_line = (
+            "$launcher sg " + shlex.quote(str(user_group)) + " -c 'bash \"$job_dir/command.sh\"'"
+            if user_group
+            else '$launcher bash "$job_dir/command.sh"'
         )
         device_preflight = ""
         if spec.get("device") is not None:
@@ -234,6 +277,8 @@ heartbeat_pid=$!
 date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.started_at" && mv "$tmp.started_at" "$job_dir/started_at"
 {cwd_line}
 cd_rc=$?
+source_rc=0
+{source_lines}
 {exports}
 printf 'PATH=%s\nSHELL=%s\nCUDA_VISIBLE_DEVICES=%s\nASCEND_RT_VISIBLE_DEVICES=%s\n' \
   "$PATH" "${{SHELL:-}}" "${{CUDA_VISIBLE_DEVICES:-}}" "${{ASCEND_RT_VISIBLE_DEVICES:-}}" > "$job_dir/environment.snapshot"
@@ -241,6 +286,9 @@ rc=0
 {device_preflight}
 if [ "$cd_rc" -ne 0 ]; then
   echo "working directory does not exist: {shlex.quote(spec.get('cwd') or '')}" >"$job_dir/stderr.log"
+  rc=125
+elif [ "$source_rc" -ne 0 ]; then
+  echo "execution profile source failed with exit code $source_rc" >>"$job_dir/stderr.log"
   rc=125
 elif [ "$rc" -eq 0 ]; then
   (
@@ -265,6 +313,7 @@ date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.finished_at" && mv "$tmp.finished_at" "$j
         }).encode()).decode()
         script = f"""set -eu
 job_dir={remote_expr}
+export job_dir
 umask 077
 mkdir -p "$job_dir"
 chmod 700 "$job_dir"
@@ -275,7 +324,8 @@ chmod 700 "$job_dir/command.sh"
 : > "$job_dir/stderr.log"
 {registration_cleanup}
 {queue_setup}
-setsid nohup bash "$job_dir/command.sh" </dev/null >/dev/null 2>&1 9>&- &
+if command -v setsid >/dev/null 2>&1; then launcher=setsid; else launcher=nohup; fi
+{launch_line} </dev/null >"$job_dir/wrapper.start.stdout" 2>"$job_dir/wrapper.start.stderr" 9>&- &
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && {ready_started_check}:; then
     echo "PID=$(cat "$job_dir/pid")"
@@ -289,9 +339,19 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 0.1
 done
 echo 'remote wrapper did not start' >&2
+[ ! -s "$job_dir/wrapper.start.stderr" ] || tail -c 1000 "$job_dir/wrapper.start.stderr" >&2
 exit 1
 """
-        output = self._invoke(job["host"], script, timeout=5)
+        try:
+            output = self._invoke(job["host"], script, timeout=5)
+        except SSHError as exc:
+            details = dict(exc.details)
+            details.update(
+                host=job["host"],
+                cwd=job.get("cwd"),
+                wrapper_stage="startup_handshake",
+            )
+            raise SSHError(str(exc), **details) from exc
         values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
         if not queue and not values.get("STARTED"):
             raise SSHError("remote wrapper returned no start timestamp")
@@ -325,13 +385,15 @@ emit_file pid PID
 emit_file pid_start_ticks PID_START_TICKS
 emit_file pgid PGID
 emit_file started_at STARTED
-[ -f "$job_dir/stdout.log" ] && echo "STDOUT_BYTES=$(stat -c %s "$job_dir/stdout.log")"
-[ -f "$job_dir/stderr.log" ] && echo "STDERR_BYTES=$(stat -c %s "$job_dir/stderr.log")"
-latest=$(stat -c %Y "$job_dir/stdout.log" "$job_dir/stderr.log" 2>/dev/null | sort -nr | head -1)
+file_size() {{ stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null; }}
+file_epoch() {{ stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }}
+[ -f "$job_dir/stdout.log" ] && echo "STDOUT_BYTES=$(file_size "$job_dir/stdout.log")"
+[ -f "$job_dir/stderr.log" ] && echo "STDERR_BYTES=$(file_size "$job_dir/stderr.log")"
+latest=$(for file in "$job_dir/stdout.log" "$job_dir/stderr.log"; do [ ! -s "$file" ] || file_epoch "$file"; done | sort -nr | head -1)
 [ -n "${{latest:-}}" ] && echo "LAST_OUTPUT_EPOCH=$latest"
 heartbeat_fresh=0
 if [ -f "$job_dir/heartbeat" ]; then
-  heartbeat_epoch=$(stat -c %Y "$job_dir/heartbeat")
+  heartbeat_epoch=$(file_epoch "$job_dir/heartbeat")
   now_epoch=$(date +%s)
   heartbeat_age=$((now_epoch - heartbeat_epoch))
   [ "$heartbeat_age" -le 15 ] && heartbeat_fresh=1
@@ -349,16 +411,16 @@ elif [ ! -f "$job_dir/exit_code" ] && [ ! -f "$job_dir/cancelled_at" ] && [ -f "
     *)
       if kill -0 "$pid" 2>/dev/null; then
         alive=1
-        current_state=$(awk '{{print $3}}' "/proc/$pid/stat" 2>/dev/null || true)
+        if [ -r "/proc/$pid/stat" ]; then current_state=$(awk '{{print $3}}' "/proc/$pid/stat"); else current_state=$(ps -o stat= -p "$pid" | cut -c1); fi
         [ "$current_state" = "Z" ] && alive=0
         if [ -s "$job_dir/pid_start_ticks" ]; then
           expected=$(cat "$job_dir/pid_start_ticks")
-          current=$(awk '{{print $22}}' "/proc/$pid/stat" 2>/dev/null || true)
+          if [ -r "/proc/$pid/stat" ]; then current=$(awk '{{print $22}}' "/proc/$pid/stat"); else current=$(ps -o lstart= -p "$pid" | cksum | awk '{{print $1}}'); fi
           [ "$current" = "$expected" ] || alive=0
         fi
         if [ "$alive" -eq 1 ] && [ -s "$job_dir/pgid" ]; then
           expected_pgid=$(cat "$job_dir/pgid")
-          current_pgid=$(awk '{{print $5}}' "/proc/$pid/stat" 2>/dev/null || true)
+          if [ -r "/proc/$pid/stat" ]; then current_pgid=$(awk '{{print $5}}' "/proc/$pid/stat"); else current_pgid=$(ps -o pgid= -p "$pid" | tr -d ' '); fi
           [ "$current_pgid" = "$expected_pgid" ] || alive=0
         fi
       fi
@@ -445,6 +507,10 @@ exit 0
             updates["last_output_at"] = datetime.fromtimestamp(
                 int(values["LAST_OUTPUT_EPOCH"]), timezone.utc
             ).isoformat().replace("+00:00", "Z")
+        if values.get("HEARTBEAT_EPOCH", "").isdigit():
+            updates["last_heartbeat_at"] = datetime.fromtimestamp(
+                int(values["HEARTBEAT_EPOCH"]), timezone.utc
+            ).isoformat().replace("+00:00", "Z")
         return self.store.update_if_active(job["job_id"], **updates) if updates else job
 
     def cancel(self, job: dict[str, Any], grace_seconds: float) -> dict[str, Any]:
@@ -464,11 +530,11 @@ pid=$(cat "$job_dir/pid")
 pgid=$(cat "$job_dir/pgid")
 case "$pid:$pgid" in *[!0-9:]*) echo 'OUTCOME=lost'; exit 0 ;; esac
 kill -0 "$pid" 2>/dev/null || {{ echo 'OUTCOME=lost'; exit 0; }}
-current_pgid=$(awk '{{print $5}}' "/proc/$pid/stat" 2>/dev/null || true)
+if [ -r "/proc/$pid/stat" ]; then current_pgid=$(awk '{{print $5}}' "/proc/$pid/stat"); else current_pgid=$(ps -o pgid= -p "$pid" | tr -d ' '); fi
 [ "$current_pgid" = "$pgid" ] || {{ echo 'OUTCOME=lost'; exit 0; }}
 if [ -s "$job_dir/pid_start_ticks" ]; then
   expected=$(cat "$job_dir/pid_start_ticks")
-  current=$(awk '{{print $22}}' "/proc/$pid/stat" 2>/dev/null || true)
+  if [ -r "/proc/$pid/stat" ]; then current=$(awk '{{print $22}}' "/proc/$pid/stat"); else current=$(ps -o lstart= -p "$pid" | cksum | awk '{{print $1}}'); fi
   [ "$current" = "$expected" ] || {{ echo 'OUTCOME=lost'; exit 0; }}
 fi
 tmp="$job_dir/.cancelled.$$"
@@ -521,7 +587,7 @@ job_dir={remote_expr}
 for stream in stdout stderr; do
   file="$job_dir/$stream.log"
   [ -f "$file" ] || continue
-  size=$(stat -c %s "$file")
+  size=$(stat -c %s "$file" 2>/dev/null || stat -f %z "$file")
   data=$(tail -n {int(tail)} "$file" | tail -c {each} | base64 | tr -d '\\n')
   echo "${{stream^^}}_SIZE=$size"
   echo "${{stream^^}}_DATA=$data"
@@ -584,17 +650,25 @@ fi
         if not job["artifact_paths"]:
             return []
         payload = base64.b64encode(json.dumps({"patterns": job["artifact_paths"], "cwd": job.get("cwd"), "max_bytes": max_bytes}).encode()).decode()
-        source = r'''import base64, datetime, glob, json, os, pathlib
+        source = r'''import base64, datetime, glob, hashlib, json, os, pathlib
 spec=json.loads(base64.b64decode(os.environ["AWAITLESS_ARTIFACT_SPEC"]))
 items=[]
 for declared in spec["patterns"]:
     pattern=declared if os.path.isabs(declared) else os.path.join(spec["cwd"] or os.path.expanduser("~"), declared)
-    matches=[p for p in glob.glob(os.path.expanduser(pattern), recursive=True) if os.path.isfile(p)]
+    raw=glob.glob(os.path.expanduser(pattern), recursive=True)
+    matches=[]
+    for candidate in raw:
+        if os.path.isdir(candidate):
+            matches.extend(str(p) for p in pathlib.Path(candidate).rglob("*") if p.is_file())
+        elif os.path.isfile(candidate): matches.append(candidate)
     if not matches:
         items.append({"path":declared,"remote":True,"exists":False})
-    for matched in sorted(matches):
+    for matched in sorted(set(matches)):
         stat=os.stat(matched)
-        item={"path":matched,"declared_path":declared,"remote":True,"exists":True,"size_bytes":stat.st_size,"modified_at":datetime.datetime.fromtimestamp(stat.st_mtime,datetime.timezone.utc).isoformat().replace("+00:00","Z")}
+        digest=hashlib.sha256()
+        with open(matched,"rb") as handle:
+            for chunk in iter(lambda:handle.read(1048576),b""): digest.update(chunk)
+        item={"path":matched,"declared_path":declared,"remote":True,"exists":True,"size_bytes":stat.st_size,"sha256":digest.hexdigest(),"modified_at":datetime.datetime.fromtimestamp(stat.st_mtime,datetime.timezone.utc).isoformat().replace("+00:00","Z")}
         if pathlib.Path(matched).suffix.lower()==".json" and stat.st_size<=spec["max_bytes"]:
             try:
                 with open(matched,encoding="utf-8") as handle: item["content"]=json.load(handle)
