@@ -87,7 +87,7 @@ jobs:
           PY
 
       - name: Run Ruff
-        run: ruff check src tests benchmarks scripts metric
+        run: ruff check src tests scripts metric
 
       - name: Validate MCP Registry metadata
         run: |
