@@ -17,6 +17,7 @@ from metric import (
     run_agent,
     run_local,
     run_long_running,
+    run_spectrum,
     run_tool_selection,
 )
 
@@ -86,6 +87,15 @@ class ToolSelectionMetricTest(unittest.TestCase):
         self.assertTrue(record["metrics"]["duplicate_submission"])
         self.assertFalse(record["metrics"]["artifact_consumed"])
         self.assertFalse(record["metrics"]["final_task_completed"])
+
+
+class SpectrumMetricTest(unittest.TestCase):
+    def test_command_failure_exit_still_parses_terminal_json(self) -> None:
+        result = subprocess.CompletedProcess(
+            ["awaitless", "run"], 3,
+            stdout=b'{"state":"failed","exit_code":7}', stderr=b"",
+        )
+        self.assertEqual(run_spectrum.parse_json(result, "fixture")["exit_code"], 7)
 
 
 class MetricWorkloadTest(unittest.TestCase):

@@ -39,7 +39,9 @@ def execute(argv: list[str], *, cwd: Path, timeout: float = 1800) -> subprocess.
 
 
 def parse_json(result: subprocess.CompletedProcess[bytes], label: str) -> dict[str, Any]:
-    if result.returncode not in {0, 1, 2, 124}:
+    # Awaitless uses exit 3 when the managed command itself exits non-zero;
+    # the JSON terminal result is still authoritative and must be recorded.
+    if result.returncode not in {0, 1, 2, 3, 124}:
         raise RuntimeError(f"{label} failed with exit {result.returncode}: {result.stderr[-1000:]!r}")
     try:
         value = json.loads(result.stdout)
