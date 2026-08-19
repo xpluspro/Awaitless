@@ -176,7 +176,9 @@ class CLITest(unittest.TestCase):
         )
         self.assertEqual(value["queue"], "device-4")
         final = json.loads(self.run_cli("wait", value["job_id"], "--json").stdout)
-        self.assertEqual(final["stdout_tail"], "4 4\n")
+        self.assertEqual(final["stdout_tail"], "0 4\n")
+        self.assertEqual(final["device"], "4")
+        self.assertEqual(final["device_mode"], "physical")
 
     def test_submit_and_wait_group_aggregate_devices(self) -> None:
         submitted = json.loads(

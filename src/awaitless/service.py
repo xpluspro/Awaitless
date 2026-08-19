@@ -463,8 +463,10 @@ class Service:
         recent = self.settings.data_dir / "recent-jobs.json"
         entries = []
         if recent.is_file():
-            try: entries = json.loads(recent.read_text(encoding="utf-8"))
-            except (OSError, ValueError): entries = []
+            try:
+                entries = json.loads(recent.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                entries = []
         entries = [result] + [item for item in entries if item.get("job_id") != result.get("job_id")]
         atomic_json(recent, entries[:50])
 
