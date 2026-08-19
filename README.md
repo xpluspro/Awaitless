@@ -65,6 +65,12 @@ awaitless wait job_019F... --json
 # {"state":"succeeded","exit_code":0,"parsed_results":{...}}
 ```
 
+Detached JSON also includes `job_state`, `wait_state`, `delivery_state`, and a
+ready-to-copy `next_command`. A client-side wait timeout is not a workload
+failure: use `awaitless wait --last --json` for the most recently detached Job,
+or use the returned command with its stable Job ID. To inspect benchmark lines
+without reading a large tail, use `awaitless logs <job-id> --grep 'PASS|FAIL|median|CV'`.
+
 Every `run` is durable before launch. Finishing within the inline window looks
 like an ordinary command result; crossing it only detaches the waiter. Interrupt
 the waiter, close the MCP client, or start a fresh agent session: the Job keeps
@@ -215,6 +221,8 @@ For direct CLI use, the whole loop is:
 awaitless run --json --name tests -- python -m pytest -q
 # If delivery is detached, save the returned job_id, then:
 awaitless wait <job-id> --json
+# Or recover the most recent detached job:
+awaitless wait --last --json
 ```
 
 ## One interface, three places to run

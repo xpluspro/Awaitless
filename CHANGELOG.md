@@ -11,6 +11,12 @@
 
 ## Unreleased
 
+- Clarify detached result delivery with `job_state`, `wait_state`, and
+  `delivery_state`, and include a copyable `next_command` in detached output.
+- Add `awaitless wait --last` for recovering the most recently detached job and
+  `awaitless logs --grep REGEX` for focused bounded log diagnostics.
+- Synchronize the bundled Awaitless Skill, README examples, and CLI reference
+  with the new recovery and diagnostic paths.
 - Reframe named queues as durable fixed-concurrency admission control for scarce
   resources, and document that discovery, topology, leases, multi-resource
   allocation, and physical cluster scheduling remain outside Awaitless.

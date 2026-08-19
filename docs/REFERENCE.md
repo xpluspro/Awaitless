@@ -1,7 +1,7 @@
 # Awaitless reference guide
 
 This guide contains the technical detail intentionally kept out of the project
-README. It describes Awaitless 0.6.x as shipped by the `awaitless-runner`
+README. It describes Awaitless 0.7.x as shipped by the `awaitless-runner`
 distribution.
 
 ## Requirements and installation
@@ -116,9 +116,11 @@ Common operations:
 awaitless run --json -- ninja -C build
 awaitless submit --json --name build -- ninja -C build
 awaitless wait <job-id> --json
+awaitless wait --last --json
 awaitless completions <job-a> <job-b> --json
 awaitless status <job-id> --json
 awaitless logs <job-id> --tail 200 --json
+awaitless logs <job-id> --grep 'PASS|FAIL|median|CV' --json
 awaitless cancel <job-id> --grace-period 5s --json
 awaitless list --state running --json
 awaitless queue create gpu0 --concurrency 1 --json
@@ -166,7 +168,32 @@ active, the response contains its current state, stable Job ID, bounded log
 tails, `delivery: "detached"`, and `detached: true`. Detachment is a successful
 submission, not a runtime timeout; use `wait`, `completions`, or the equivalent
 MCP result tools later. `detach_reason` is `inline_timeout` or `queued`; inline
-results set it to `null`.
+results set it to `null`. Detached responses also include `next_command`, a
+ready-to-copy `awaitless wait <job-id> --json` command.
+
+### Wait and delivery states
+
+Machine-readable wait responses distinguish the workload from the current
+client waiter and result delivery:
+
+```json
+{
+  "job_state": "running",
+  "wait_state": "client_timeout",
+  "delivery_state": "pending"
+}
+```
+
+`job_state` mirrors the durable job `state`. `wait_state` is `client_timeout`
+when `--timeout` expires and `complete` after a terminal result is collected.
+`delivery_state` is `pending` for a detached/non-terminal response and
+`delivered` for a terminal `wait` response. A client-side wait timeout never
+cancels the managed job. `awaitless wait --last --json` resolves the most
+recent detached job recorded by the local client.
+
+`logs --grep REGEX` filters each bounded stdout/stderr tail by matching lines;
+JSON responses include the original `grep` expression. It is intended for
+focused benchmark and failure diagnostics, not unbounded log retrieval.
 
 An adaptive run routed to a named queue detaches immediately. The queue can be
 passed explicitly, configured globally with `defaults.queue`, or configured for

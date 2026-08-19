@@ -38,8 +38,9 @@ description: Run non-interactive builds, tests, benchmarks, and local, SSH, or S
 
    - `inline`: analyze the terminal state, exit code, bounded logs, and Artifact
      immediately.
-   - `detached`: save `job_id`, continue useful work, then consume the result at
-     one blocking boundary.
+   - `detached`: the workload is still managed; save `job_id`, continue useful
+     work, then consume the result at one blocking boundary. The JSON response
+     includes a ready-to-copy `next_command`.
 
 3. For one detached Job, call wait exactly once when its result is needed:
 
@@ -47,14 +48,30 @@ description: Run non-interactive builds, tests, benchmarks, and local, SSH, or S
    awaitless wait <job_id> --json --progress-interval 30s
    ```
 
+   When the most recent detached job is the one you need, use:
+
+   ```bash
+   awaitless wait --last --json
+   ```
+
    Let this command block. Do not insert `sleep`, `ps`, `tail`, repeated SSH calls, or periodic `status` calls.
 
-4. Analyze `state`, `exit_code`, bounded `stdout_tail`/`stderr_tail`, and `parsed_results`.
+4. Analyze `job_state`, `wait_state`, `delivery_state`, `exit_code`, bounded
+   `stdout_tail`/`stderr_tail`, and `parsed_results`. A `wait_state` of
+   `client_timeout` means only the current waiter expired; `job_state` is the
+   workload state and `delivery_state` says whether this response delivered a
+   terminal result.
 
 5. Read additional bounded logs only when wait reports `failed`, `timed_out`, `stalled`, or `lost`:
 
    ```bash
    awaitless logs <job_id> --tail 200 --json
+   ```
+
+   For benchmark output, filter bounded lines without loading a full log:
+
+   ```bash
+   awaitless logs <job_id> --grep 'PASS|FAIL|median|CV' --json
    ```
 
 ## Consume multiple completions

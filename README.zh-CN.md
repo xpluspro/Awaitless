@@ -56,6 +56,11 @@ awaitless wait job_019F... --json
 # {"state":"succeeded","exit_code":0,"parsed_results":{...}}
 ```
 
+detached JSON 还会返回 `job_state`、`wait_state`、`delivery_state` 和可直接复制的
+`next_command`。等待器超时不代表任务失败：最近一次 detached 任务可以直接执行
+`awaitless wait --last --json`，也可以使用返回结果中的稳定 Job ID。需要从 benchmark 日志中
+提取关键行时，可使用 `awaitless logs <job-id> --grep 'PASS|FAIL|median|CV'`，避免读取大段日志。
+
 每次 `run` 都会先创建 durable Job。inline window 内完成时像普通命令一样返回；超过窗口
 只会 detach waiter。中断 waiter、关闭 MCP 客户端或换一个全新的 Agent 会话都不会停止
 任务，只凭稳定 job ID 就能恢复结果。
@@ -209,6 +214,8 @@ Codex 任务，以便同时加载 Skill 和 MCP Tools。
 awaitless run --json --name tests -- python -m pytest -q
 # 如果 delivery 是 detached，保存返回的 job_id，然后：
 awaitless wait <job-id> --json
+# 或直接恢复最近一次 detached 任务：
+awaitless wait --last --json
 ```
 
 ## 一套接口，三个运行位置
