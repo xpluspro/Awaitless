@@ -192,6 +192,16 @@ Retrying an expensive submission with the same
 `client_request_id` cannot launch a duplicate job. For parallel work, every
 client can use `wait_for_completions` regardless of MCP Tasks support.
 
+### Codex plugin
+
+This repository is also a Codex plugin. Its manifest bundles the Awaitless agent
+skill with the stdio MCP server, which Codex launches through `uvx`. Install the
+repository from a local Codex marketplace, then start a new Codex task so the
+skill and MCP tools are loaded together.
+
+The plugin requires `uvx` on `PATH`; the first MCP launch downloads
+`awaitless-runner` from PyPI if it is not already cached.
+
 For direct CLI use, the whole loop is:
 
 ```bash

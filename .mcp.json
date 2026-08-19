@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "awaitless": {
+      "command": "uvx",
+      "args": [
+        "awaitless-runner"
+      ]
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "awaitless",
+  "version": "0.6.0",
+  "description": "Durable local, SSH, and Slurm command execution for coding agents.",
+  "author": {
+    "name": "Awaitless contributors",
+    "url": "https://github.com/xpluspro"
+  },
+  "homepage": "https://github.com/xpluspro/Awaitless",
+  "repository": "https://github.com/xpluspro/Awaitless",
+  "license": "MIT",
+  "keywords": [
+    "durable-jobs",
+    "mcp",
+    "ssh",
+    "slurm",
+    "task-runner"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Awaitless",
+    "shortDescription": "Run durable commands without polling",
+    "longDescription": "Run builds, tests, benchmarks, and other non-interactive commands through a durable execution layer. Quick work returns inline; longer or queued work remains recoverable across local, SSH, and Slurm environments.",
+    "developerName": "Awaitless contributors",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/xpluspro/Awaitless",
+    "defaultPrompt": [
+      "Run this project's test suite through Awaitless.",
+      "Start this long command and return when it finishes.",
+      "Run these independent jobs and collect their results."
+    ],
+    "brandColor": "#167D68"
+  }
+}

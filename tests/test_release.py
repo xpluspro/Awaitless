@@ -21,6 +21,10 @@ class ReleaseMetadataTest(unittest.TestCase):
     def test_versions_registry_identity_and_entry_point_stay_in_sync(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        plugin = json.loads(
+            (ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        plugin_mcp = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
@@ -28,6 +32,14 @@ class ReleaseMetadataTest(unittest.TestCase):
         self.assertEqual(version, __version__)
         self.assertEqual(server["version"], version)
         self.assertEqual(server["packages"][0]["version"], version)
+        self.assertEqual(plugin["version"].partition("+")[0], version)
+        self.assertEqual(plugin["name"], "awaitless")
+        self.assertEqual(plugin["skills"], "./skills/")
+        self.assertEqual(plugin["mcpServers"], "./.mcp.json")
+        self.assertEqual(
+            plugin_mcp["mcpServers"]["awaitless"],
+            {"command": "uvx", "args": ["awaitless-runner"]},
+        )
         self.assertEqual(server["name"], MCP_NAME)
         self.assertIn(f"<!-- mcp-name: {MCP_NAME} -->", readme)
         self.assertEqual(server["packages"][0]["identifier"], project["project"]["name"])

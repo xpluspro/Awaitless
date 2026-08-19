@@ -171,6 +171,15 @@ handle。支持 MCP Tasks 的客户端仍可使用 `run_job`，低层客户端�
 `client_request_id` 重试时不会重复启动。并行任务可以通过 `wait_for_completions` 统一消费，
 无论客户端是否支持 MCP Tasks。
 
+### Codex 插件
+
+本仓库同时也是一个 Codex 插件。插件清单将 Awaitless Agent Skill 与 stdio MCP Server
+打包在一起，Codex 通过 `uvx` 启动服务。从本地 Codex marketplace 安装仓库后，请新建一个
+Codex 任务，以便同时加载 Skill 和 MCP Tools。
+
+插件要求 `PATH` 中存在 `uvx`；如果本机尚未缓存，第一次启动 MCP 时会从 PyPI 下载
+`awaitless-runner`。
+
 直接使用 CLI 的完整流程只有两步：
 
 ```bash
