@@ -16,10 +16,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from metric.provenance import git_state
-
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from metric.provenance import git_state  # noqa: E402
+
+
 EXPECTED_VERSION = "0.8.0"
 
 
