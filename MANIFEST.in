@@ -9,3 +9,4 @@ recursive-include examples *.py *.toml
 recursive-include metric *.md *.py *.json
 recursive-include scripts *.py
 recursive-include skills *.md *.yaml
+include bin/awaitless

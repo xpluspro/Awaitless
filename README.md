@@ -104,6 +104,13 @@ provides the Agent-facing job lifecycle around that scheduler.
 
 ## Consume whichever job finishes next
 
+v0.7 adds `completions ... --drain --json` for consuming a small parallel set
+in one call without client-side cursor bookkeeping. Long jobs can emit
+structured heartbeat updates with `wait --progress-interval 30s`. Use
+`--capture-log PATH` for command-owned logs and `--resource gpu=0` or
+`--device 0` for explicit exclusive admission; terminal results freeze bounded
+logs, diagnostics, timing, environment, and a SHA-256 identified snapshot.
+
 Submit independent work up front, keep every Job ID, then wait at one durable
 completion boundary:
 
@@ -265,7 +272,7 @@ tails enter the agent context.
 - [Documentation index](docs/README.md)
 - [Product positioning and evolution principles](docs/PRD.zh-CN.md)
 - [v0.6 adaptive run](docs/v0.6.zh-CN.md)
-- [v0.7 immutable completion snapshots plan](docs/v0.7.zh-CN.md)
+- [v0.7 immutable completion snapshots](docs/v0.7.zh-CN.md)
 - [v0.5 durable completion feed](docs/v0.5.zh-CN.md)
 - [CLI, configuration, SSH, Slurm, persistence, Artifacts, and troubleshooting](docs/REFERENCE.md)
 - [MCP Tasks protocol and compatibility](docs/MCP_TASKS.md)

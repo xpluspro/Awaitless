@@ -110,14 +110,17 @@ def run(db_path: Path, job_id: str, spec_path: Path) -> int:
                 )
                 return 0
             except subprocess.TimeoutExpired:
-                terminate_group(os.getpgid(process.pid), 2.0)
-                process.wait()
                 store.update_if_active(
                     job_id,
                     state="timed_out",
-                    exit_code=process.returncode,
                     finished_at=utc_now(),
                     error=f"job exceeded {timeout:g} seconds",
+                )
+                terminate_group(os.getpgid(process.pid), 2.0)
+                process.wait()
+                store.update(
+                    job_id,
+                    exit_code=process.returncode,
                 )
                 return 0
     finally:

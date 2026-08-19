@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     queue_order INTEGER,
     device TEXT,
     device_mode TEXT,
+    capture_logs_json TEXT NOT NULL DEFAULT '[]',
+    resources_json TEXT NOT NULL DEFAULT '{}',
+    environment_json TEXT NOT NULL DEFAULT '{}',
+    phase TEXT,
     error TEXT,
     updated_at TEXT NOT NULL
 );
@@ -67,10 +71,25 @@ CREATE TABLE IF NOT EXISTS state_events (
     detail TEXT,
     FOREIGN KEY(job_id) REFERENCES jobs(job_id)
 );
+CREATE TABLE IF NOT EXISTS completion_snapshots (
+    job_id TEXT PRIMARY KEY,
+    captured_at TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    result_sha256 TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES jobs(job_id)
+);
 """
 
 
-JSON_FIELDS = {"command_json": "command", "env_json": "env", "artifacts_json": "artifact_paths"}
+JSON_FIELDS = {
+    "command_json": "command",
+    "env_json": "env",
+    "artifacts_json": "artifact_paths",
+    "capture_logs_json": "capture_logs",
+    "resources_json": "resources",
+    "environment_json": "environment_snapshot",
+}
 
 
 class Store:
@@ -95,6 +114,10 @@ class Store:
             ("queue_order", "INTEGER"),
             ("device", "TEXT"),
             ("device_mode", "TEXT"),
+            ("capture_logs_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("resources_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("environment_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("phase", "TEXT"),
         ):
             if column not in existing:
                 self.connection.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
@@ -112,6 +135,33 @@ class Store:
         ).fetchone()
         if not completion_index:
             self._migrate_completions()
+
+    def get_snapshot(self, job_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT captured_at,result_json,result_sha256,size_bytes "
+            "FROM completion_snapshots WHERE job_id=?", (job_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "captured_at": row["captured_at"],
+            "sha256": row["result_sha256"],
+            "size_bytes": row["size_bytes"],
+            "result": json.loads(row["result_json"]),
+        }
+
+    def create_snapshot(
+        self, job_id: str, result_json: str, sha256: str, size_bytes: int
+    ) -> dict[str, Any]:
+        captured_at = utc_now()
+        self.connection.execute(
+            "INSERT OR IGNORE INTO completion_snapshots"
+            "(job_id,captured_at,result_json,result_sha256,size_bytes) VALUES(?,?,?,?,?)",
+            (job_id, captured_at, result_json, sha256, size_bytes),
+        )
+        snapshot = self.get_snapshot(job_id)
+        assert snapshot
+        return snapshot
 
     def _migrate_completions(self) -> None:
         """Make terminal state events a durable, unique completion feed."""

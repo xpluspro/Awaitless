@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 — 2026-08-19
+
+- Add immutable terminal result snapshots with SHA-256 metadata for replayable wait and completion results.
+- Make wait, completion drain, cancellation, timing, environment, resource, phase, heartbeat, and capture-log fields explicit and machine-readable.
+- Capture command-created redirected logs when paths are declared or detected in shell redirection, and preserve bounded tails in terminal results.
+- Add device/resource diagnostics, dependency/test/validation failure categories, and non-interactive environment snapshots.
+- Add `--capture-log`, `--resource`, `wait --progress-interval`, and `completions --drain` CLI paths.
+- Align plugin metadata and package version at 0.7.0.
+
 ## Unreleased
 
 - Reframe named queues as durable fixed-concurrency admission control for scarce

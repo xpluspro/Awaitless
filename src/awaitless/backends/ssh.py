@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import posixpath
 import shlex
 import subprocess
 from datetime import datetime, timezone
@@ -208,7 +209,7 @@ umask 077
 job_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 tmp="$job_dir/.tmp.$$"
 echo $$ > "$tmp.pid" && mv "$tmp.pid" "$job_dir/pid"
-awk '{{print $22}}' "/proc/$$/stat" > "$tmp.pid_start_ticks" && mv "$tmp.pid_start_ticks" "$job_dir/pid_start_ticks"
+if [ -r "/proc/$$/stat" ]; then awk '{{print $22}}' "/proc/$$/stat"; else ps -o lstart= -p $$ | cksum | awk '{{print $1}}'; fi > "$tmp.pid_start_ticks" && mv "$tmp.pid_start_ticks" "$job_dir/pid_start_ticks"
 ps -o pgid= -p $$ | tr -d ' ' > "$tmp.pgid" && mv "$tmp.pgid" "$job_dir/pgid"
 pending_file=
 heartbeat_pid=
@@ -234,6 +235,8 @@ date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.started_at" && mv "$tmp.started_at" "$job
 {cwd_line}
 cd_rc=$?
 {exports}
+printf 'PATH=%s\nSHELL=%s\nCUDA_VISIBLE_DEVICES=%s\nASCEND_RT_VISIBLE_DEVICES=%s\n' \
+  "$PATH" "${{SHELL:-}}" "${{CUDA_VISIBLE_DEVICES:-}}" "${{ASCEND_RT_VISIBLE_DEVICES:-}}" > "$job_dir/environment.snapshot"
 rc=0
 {device_preflight}
 if [ "$cd_rc" -ne 0 ]; then
@@ -533,6 +536,48 @@ done
             result[f"{stream}_tail"] = data
             result["truncated"] = result["truncated"] or size > len(data.encode())
         return result
+
+    def read_capture_logs(
+        self, job: dict[str, Any], paths: list[str], tail: int, max_bytes: int
+    ) -> list[dict[str, Any]]:
+        each = max(1, max_bytes // max(1, len(paths)))
+        cwd = job.get("cwd") or "."
+        items: list[dict[str, Any]] = []
+        for declared in paths:
+            resolved = declared if posixpath.isabs(declared) else posixpath.join(cwd, declared)
+            script = f"""set -u
+file={shlex.quote(resolved)}
+if [ -f "$file" ]; then
+  echo EXISTS=1
+  echo SIZE=$(stat -c %s "$file")
+  tail -n {int(tail)} "$file" | tail -c {each} | base64 | tr -d '\\n'
+else
+  echo EXISTS=0
+fi
+"""
+            output = self._invoke(job["host"], script)
+            lines = output.splitlines()
+            exists = "EXISTS=1" in lines
+            size_line = next((line for line in lines if line.startswith("SIZE=")), "SIZE=0")
+            encoded = lines[-1] if exists and lines and not lines[-1].startswith(("EXISTS=", "SIZE=")) else ""
+            data = base64.b64decode(encoded).decode(errors="replace") if encoded else ""
+            size = int(size_line.partition("=")[2] or 0)
+            items.append({"path": declared, "exists": exists, "tail": data, "truncated": size > len(data.encode())})
+        return items
+
+    def environment(self, job: dict[str, Any]) -> dict[str, Any]:
+        assert job["host"]
+        root = ssh_target_and_options(self.settings, job["host"])[2]
+        path = posixpath.join(root.rstrip("/"), job["job_id"], "environment.snapshot")
+        output = self._invoke(job["host"], f"set -u; [ -f {shlex.quote(path)} ] && cat {shlex.quote(path)} || true")
+        values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        return {
+            "path": values.get("PATH"),
+            "shell": values.get("SHELL"),
+            "gpu_visible": values.get("CUDA_VISIBLE_DEVICES") or None,
+            "npu_visible": values.get("ASCEND_RT_VISIBLE_DEVICES") or None,
+            "non_interactive": True,
+        }
 
     def artifacts(self, job: dict[str, Any], max_bytes: int) -> list[dict[str, Any]]:
         assert job["host"]

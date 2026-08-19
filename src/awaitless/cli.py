@@ -43,6 +43,9 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--stall-timeout")
     run.add_argument("--inline-timeout")
     run.add_argument("--log-dir")
+    run.add_argument("--capture-log", action="append", default=[], help="capture a command-created log file")
+    run.add_argument("--resource", action="append", default=[], metavar="NAME=VALUE")
+    run.add_argument("--script-file", help="read a Bash script locally and transfer it as one command argument")
     run.add_argument("--artifact", action="append", default=[])
     run.add_argument("--result-file", action="append", default=[], dest="artifact")
     run.add_argument(
@@ -71,6 +74,9 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--timeout")
     submit.add_argument("--stall-timeout")
     submit.add_argument("--log-dir")
+    submit.add_argument("--capture-log", action="append", default=[], help="capture a command-created log file")
+    submit.add_argument("--resource", action="append", default=[], metavar="NAME=VALUE")
+    submit.add_argument("--script-file", help="read a Bash script locally and transfer it as one command argument")
     submit.add_argument("--artifact", action="append", default=[])
     submit.add_argument("--result-file", action="append", default=[], dest="artifact")
     submit.add_argument(
@@ -115,6 +121,7 @@ def parser() -> argparse.ArgumentParser:
     wait = commands.add_parser("wait", help="block until a job reaches a terminal state")
     wait.add_argument("job_id")
     wait.add_argument("--timeout")
+    wait.add_argument("--progress-interval", help="emit structured heartbeat updates to stderr")
     wait.add_argument("--json", action="store_true")
 
     completions = commands.add_parser(
@@ -125,6 +132,7 @@ def parser() -> argparse.ArgumentParser:
     completions.add_argument("--after", dest="after_cursor")
     completions.add_argument("--timeout")
     completions.add_argument("--limit", type=int, default=50)
+    completions.add_argument("--drain", action="store_true", help="wait for all selected jobs and manage the cursor internally")
     completions.add_argument("--json", action="store_true")
 
     status = commands.add_parser("status", help="show current job state")
@@ -426,6 +434,14 @@ def main(argv: list[str] | None = None) -> int:
             return 4 if result["wait_timed_out"] else 0
         if args.action in {"run", "submit"}:
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
+            if args.script_file:
+                if command:
+                    raise AwaitlessError("--script-file cannot be combined with a command after --")
+                script_path = Path(args.script_file).expanduser()
+                try:
+                    command = ["bash", "-c", script_path.read_text(encoding="utf-8")]
+                except OSError as exc:
+                    raise AwaitlessError(f"cannot read --script-file: {exc}") from exc
             host = args.host or (
                 None if args.backend == "local" else settings.default_host
             )
@@ -452,6 +468,8 @@ def main(argv: list[str] | None = None) -> int:
                 queue_name=queue,
                 device=args.device,
                 device_mode=args.device_mode,
+                capture_logs=args.capture_log,
+                resources=_slurm_options(args.resource),
             )
             if args.action == "run":
                 # Persist identity before entering the inline waiter so a killed
@@ -492,7 +510,23 @@ def main(argv: list[str] | None = None) -> int:
             _print(service.recover_last(), True, quiet=args.quiet)
             return 0
         if args.action == "wait":
-            result, wait_timed_out = service.wait(args.job_id, parse_duration(args.timeout))
+            progress = parse_duration(args.progress_interval)
+            deadline = parse_duration(args.timeout)
+            if progress is not None and progress <= 0:
+                raise AwaitlessError("--progress-interval must be positive")
+            started = time.monotonic()
+            while progress is not None:
+                remaining = None if deadline is None else max(0.0, deadline - (time.monotonic() - started))
+                result, tick = service.wait(args.job_id, min(progress, remaining) if remaining is not None else progress)
+                if not tick:
+                    wait_timed_out = False
+                    break
+                print(json.dumps({"event": "heartbeat", **result}, ensure_ascii=False, separators=(",", ":")), file=sys.stderr)
+                if remaining is not None and remaining <= progress:
+                    wait_timed_out = True
+                    break
+            else:
+                result, wait_timed_out = service.wait(args.job_id, deadline)
             _print(result, json_mode, quiet=args.quiet)
             return 4 if wait_timed_out else EXIT_CODES.get(result["state"], 1)
         if args.action == "completions":
@@ -507,6 +541,16 @@ def main(argv: list[str] | None = None) -> int:
                 wait_timeout=parse_duration(args.timeout),
                 limit=args.limit,
             )
+            if args.drain:
+                collected = list(result["completions"])
+                cursor = result["next_cursor"]
+                while result["active_job_ids"] or result["has_more"]:
+                    result = service.completions(job_ids, after_cursor=cursor, wait_timeout=parse_duration(args.timeout), limit=args.limit)
+                    collected.extend(result["completions"])
+                    cursor = result["next_cursor"]
+                    if result["wait_timed_out"]:
+                        break
+                result = {**result, "completions": collected, "next_cursor": cursor}
             if json_mode:
                 _print(result, True, quiet=args.quiet)
             elif not args.quiet:

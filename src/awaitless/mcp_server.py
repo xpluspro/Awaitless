@@ -60,6 +60,8 @@ def _submit_with_service(
     queue: str | None,
     as_mcp_task: bool,
     use_default_queue: bool = False,
+    capture_logs: list[str] | None = None,
+    resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     selected, selected_host = _selected_target(service, backend, host)
     selected_queue = (
@@ -92,6 +94,8 @@ def _submit_with_service(
         client_request_id=client_request_id,
         mcp_task_ttl_ms=task_ttl_ms,
         queue_name=selected_queue,
+        capture_logs=capture_logs,
+        resources=resources,
     )
 
 
@@ -141,6 +145,8 @@ def run(
     slurm_options: dict[str, str | int | float] | None = None,
     client_request_id: str | None = None,
     queue: str | None = None,
+    capture_logs: list[str] | None = None,
+    resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run a non-interactive command through Awaitless's adaptive execution path.
 
@@ -173,6 +179,8 @@ def run(
             queue=queue,
             as_mcp_task=False,
             use_default_queue=True,
+            capture_logs=capture_logs,
+            resources=resources,
         )
         return service.adaptive_wait(
             submitted["job_id"],
@@ -195,6 +203,8 @@ def submit_job(
     slurm_options: dict[str, str | int | float] | None = None,
     client_request_id: str | None = None,
     queue: str | None = None,
+    capture_logs: list[str] | None = None,
+    resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Submit a durable job and return its stable ID without waiting.
 
@@ -221,6 +231,8 @@ def submit_job(
             client_request_id=client_request_id,
             queue=queue,
             as_mcp_task=False,
+            capture_logs=capture_logs,
+            resources=resources,
         )
 
 
@@ -238,6 +250,8 @@ def run_job(
     artifacts: list[str] | None = None,
     slurm_options: dict[str, str | int | float] | None = None,
     queue: str | None = None,
+    capture_logs: list[str] | None = None,
+    resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one durable job.
 
@@ -261,6 +275,8 @@ def run_job(
             client_request_id=client_request_id,
             queue=queue,
             as_mcp_task=True,
+            capture_logs=capture_logs,
+            resources=resources,
         )
         result, _ = service.wait(submitted["job_id"])
         return result

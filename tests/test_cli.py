@@ -159,6 +159,39 @@ class CLITest(unittest.TestCase):
         self.assertEqual((value["state"], value["exit_code"]), ("failed", 7))
         self.assertEqual(value["stderr_tail"], "error\n")
 
+    def test_v07_snapshot_capture_log_resource_and_terminal_cancel(self) -> None:
+        work = Path(self.temp.name) / "v07"
+        work.mkdir()
+        submitted = json.loads(
+            self.run_cli(
+                "run", "--cwd", str(work), "--resource", "gpu=0",
+                "--inline-timeout", "2s", "--json", "--", "bash", "-c",
+                "echo AWAITLESS_PHASE=benchmark; echo root-cause > run.log; exit 7",
+            ).stdout
+        )
+        value = json.loads(self.run_cli("wait", submitted["job_id"], "--json", expected=3).stdout)
+        self.assertEqual(value["resources"], {"gpu": "0"})
+        self.assertEqual(value["queue"], "resource-gpu-0")
+        self.assertEqual(value["phase"], "benchmark")
+        self.assertEqual(value["captured_logs"][0]["tail"], "root-cause\n")
+        self.assertIn("sha256", value["snapshot"])
+        original = value["snapshot"]["sha256"]
+        (work / "run.log").write_text("changed\n", encoding="utf-8")
+        replay = json.loads(self.run_cli("wait", value["job_id"], "--json", expected=3).stdout)
+        self.assertEqual(replay["snapshot"]["sha256"], original)
+        self.assertEqual(replay["captured_logs"][0]["tail"], "root-cause\n")
+        cancelled = json.loads(self.run_cli("cancel", value["job_id"], "--json").stdout)
+        self.assertFalse(cancelled["cancel_applied"])
+        self.assertEqual(cancelled["cancel_outcome"], "already_terminal")
+        self.assertLessEqual(replay["created_at"], replay["started_at"])
+        self.assertLessEqual(replay["started_at"], replay["finished_at"])
+
+    def test_completion_drain_hides_cursor_bookkeeping(self) -> None:
+        jobs = [self.submit(sys.executable, "-c", f"import time; time.sleep({delay})") for delay in (0.05, 0.1)]
+        value = json.loads(self.run_cli("completions", *jobs, "--drain", "--json").stdout)
+        self.assertEqual({item["job_id"] for item in value["completions"]}, set(jobs))
+        self.assertEqual(value["active_job_ids"], [])
+
     def test_exit_21_has_structured_device_diagnostic(self) -> None:
         job = self.submit("bash", "-c", "echo 'npu-smi is unavailable' >&2; exit 21")
         value = json.loads(self.run_cli("wait", job, "--json", expected=3).stdout)
@@ -709,8 +742,10 @@ with open(lock_path, 'a') as lock:
         completion = json.loads(
             self.run_cli("completions", job, "--json").stdout
         )["completions"][0]["result"]
-        self.assertTrue(completion["truncated"])
-        self.assertLessEqual(len(completion["stdout_tail"].encode()), 100)
+        # v0.7 replays the immutable snapshot captured by the first wait; a
+        # later client configuration change cannot mutate that result.
+        self.assertIn("snapshot", completion)
+        self.assertGreater(len(completion["stdout_tail"]), 100)
 
     def test_json_artifact_is_parsed(self) -> None:
         work = Path(self.temp.name) / "work"

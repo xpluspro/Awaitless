@@ -92,6 +92,16 @@ queue = "gpu0"
 
 ## 哪个任务先完成，就先消费哪个结果
 
+v0.7 可用 `--drain` 在一次调用中消费完少量并行任务，无需由调用方保存 cursor：
+
+```bash
+awaitless completions job_A job_B job_C --drain --json
+```
+
+长任务可用 `wait --progress-interval 30s` 在 stderr 接收结构化心跳。命令内部写入的日志可用
+`--capture-log path` 声明；常见 shell `> path` 重定向也会自动识别并把有界 tail 固化进结果快照。
+使用 `--resource gpu=0` 或 `--device 0` 会建立独占命名队列，并在结果中返回资源、阶段和环境快照。
+
 先提交所有相互独立的工作并保存 Job ID，然后在一个持久 completion 边界等待：
 
 ```bash

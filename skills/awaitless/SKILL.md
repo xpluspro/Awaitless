@@ -22,6 +22,11 @@ description: Run non-interactive builds, tests, benchmarks, and local, SSH, or S
    awaitless run --json --cwd /path/to/project -- command arg1 arg2
    ```
 
+   The plugin installs a `bin/awaitless` launcher and adds that directory to
+   the process PATH when loaded. If a host does not activate plugin PATH
+   entries, use the equivalent portable launcher:
+   `uvx --from awaitless-runner awaitless run`.
+
    Add `--host <configured-host>` for SSH. Declare machine-readable output with `--artifact results.json`.
 
    Omit `--queue` when the Operator configured a default for the target. When the
@@ -39,7 +44,7 @@ description: Run non-interactive builds, tests, benchmarks, and local, SSH, or S
 3. For one detached Job, call wait exactly once when its result is needed:
 
    ```bash
-   awaitless wait <job_id> --json
+   awaitless wait <job_id> --json --progress-interval 30s
    ```
 
    Let this command block. Do not insert `sleep`, `ps`, `tail`, repeated SSH calls, or periodic `status` calls.
@@ -60,7 +65,7 @@ description: Run non-interactive builds, tests, benchmarks, and local, SSH, or S
 2. Continue useful work when possible, then wait for the first available batch:
 
    ```bash
-   awaitless completions <job-a> <job-b> <job-c> --json
+   awaitless completions <job-a> <job-b> <job-c> --drain --json
    ```
 
 3. Process every returned completion, then save `next_cursor`. Each completion

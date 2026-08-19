@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+plugin_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -x "$plugin_root/.venv/bin/awaitless" ]; then
+  exec "$plugin_root/.venv/bin/awaitless" "$@"
+fi
+exec uvx --from awaitless-runner awaitless "$@"

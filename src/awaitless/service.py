@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import time
 import glob
 import shlex
@@ -27,6 +28,12 @@ SENSITIVE_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|AP
 MAX_COMPLETION_JOBS = 500
 MAX_COMPLETION_LIMIT = 500
 MAX_COMPLETION_EVENT_ID = (1 << 63) - 1
+
+
+def _redirected_paths(command: list[str]) -> list[str]:
+    text = " ".join(command)
+    found = re.findall(r"(?:^|\s)(?:\d?>|\d?>>)\s*([^\s;&|]+)", text)
+    return [path.strip("'\"") for path in found if path not in {"/dev/null", "-"} and not path.startswith("&")]
 
 
 class AwaitlessError(RuntimeError):
@@ -132,11 +139,23 @@ class Service:
         queue_name: str | None = None,
         device: str | None = None,
         device_mode: str = "physical",
+        capture_logs: list[str] | None = None,
+        resources: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not command:
             raise AwaitlessError("a command is required after --")
         if backend not in self.backends:
             raise AwaitlessError(f"unsupported backend: {backend}")
+        capture_logs = list(dict.fromkeys((capture_logs or []) + _redirected_paths(command)))
+        resources = dict(resources or {})
+        if resources and queue_name is None and backend != "slurm":
+            identity = "-".join(f"{key}-{value}" for key, value in sorted(resources.items()))
+            identity = re.sub(r"[^A-Za-z0-9._-]+", "-", identity).strip("-")[:50]
+            queue_name = f"resource-{identity}"
+            try:
+                self.store.create_queue(queue_name, 1)
+            except ValueError as exc:
+                raise AwaitlessError(str(exc)) from exc
         if backend in {"ssh", "slurm"} and not host:
             raise AwaitlessError(f"{backend.upper()} backend requires --host")
         if backend == "local" and host:
@@ -234,6 +253,9 @@ class Service:
             "queue": queue_name,
             "device": device,
             "device_mode": device_mode if device is not None else None,
+            "capture_logs": capture_logs,
+            "resources": resources,
+            "environment": self._environment_snapshot(env),
             "created_at": utc_now(),
         }
         spec = {
@@ -251,6 +273,9 @@ class Service:
             ),
             "device": device,
             "device_mode": device_mode,
+            "capture_logs": capture_logs,
+            "resources": resources,
+            "environment": self._environment_snapshot(env),
         }
         values = {
             "job_id": job_id,
@@ -271,6 +296,10 @@ class Service:
             "queue_name": queue_name,
             "device": device,
             "device_mode": device_mode if device is not None else None,
+            "capture_logs_json": json.dumps(capture_logs),
+            "resources_json": json.dumps(resources),
+            "environment_json": json.dumps(self._environment_snapshot(env)),
+            "phase": "queued" if queue_name else "starting",
         }
         if client_request_id is not None:
             fingerprint = _submission_fingerprint(
@@ -287,6 +316,8 @@ class Service:
                 backend_options=backend_options or {},
                 queue_name=queue_name,
                 device=device,
+                capture_logs=capture_logs,
+                resources=resources,
                 mcp_task=mcp_task_ttl_ms is not None,
             )
             try:
@@ -395,7 +426,16 @@ class Service:
         if job["backend"] == "local" and job.get("queue_name"):
             self._reconcile_local_queue(job["queue_name"], exclude=job_id)
         job = self.backends[job["backend"]].refresh(job)  # type: ignore[attr-defined]
-        return self.summary(self._apply_stall(job))
+        job = self._apply_stall(job)
+        try:
+            observed = self.logs(job_id, 50, 8192)
+            text = f"{observed.get('stdout_tail', '')}\n{observed.get('stderr_tail', '')}"
+            phases = re.findall(r"(?:^|\n)AWAITLESS_PHASE=([A-Za-z0-9._-]{1,64})(?:\n|$)", text)
+            if phases and phases[-1] != job.get("phase"):
+                job = self.store.update(job_id, phase=phases[-1])
+        except (OSError, SSHError):
+            pass
+        return self.summary(job)
 
     def wait(self, job_id: str, wait_timeout: float | None = None) -> tuple[dict[str, Any], bool]:
         started = time.monotonic()
@@ -608,6 +648,10 @@ class Service:
     def _terminal_result(
         self, job_id: str, summary: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        snapshot = self.store.get_snapshot(job_id)
+        if snapshot:
+            metadata = {key: snapshot[key] for key in ("captured_at", "sha256", "size_bytes")}
+            return {**snapshot["result"], "snapshot": metadata}
         result = dict(summary or self.summary(self.require(job_id)))
         result.update(
             self.logs(
@@ -617,6 +661,13 @@ class Service:
             )
         )
         result["artifacts"] = self.artifacts(self.require(job_id))
+        job = self.require(job_id)
+        if job["backend"] in {"ssh", "slurm"}:
+            reader = getattr(self.backends[job["backend"]], "environment", None)
+            if reader:
+                result["environment_snapshot"] = reader(job)
+        else:
+            result["environment_snapshot"] = job.get("environment_snapshot", {})
         parsed = [
             item.get("content")
             for item in result["artifacts"]
@@ -624,8 +675,28 @@ class Service:
         ]
         if len(parsed) == 1:
             result["parsed_results"] = parsed[0]
+        result["captured_logs"] = self.captured_logs(self.require(job_id))
         self._diagnose_result(result)
-        return result
+        payload = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(payload.encode()).hexdigest()
+        saved = self.store.create_snapshot(job_id, payload, digest, len(payload.encode()))
+        metadata = {key: saved[key] for key in ("captured_at", "sha256", "size_bytes")}
+        return {**saved["result"], "snapshot": metadata}
+
+    @staticmethod
+    def _environment_snapshot(env: dict[str, str]) -> dict[str, Any]:
+        merged = dict(os.environ)
+        merged.update(env)
+        path = merged.get("PATH")
+        return {
+            "shell": merged.get("SHELL"),
+            "path": path,
+            "python": shutil.which("python3", path=path),
+            "bash": shutil.which("bash", path=path),
+            "gpu_visible": merged.get("CUDA_VISIBLE_DEVICES"),
+            "npu_visible": merged.get("ASCEND_RT_VISIBLE_DEVICES"),
+            "non_interactive": True,
+        }
 
     @staticmethod
     def _diagnose_result(result: dict[str, Any]) -> None:
@@ -645,6 +716,21 @@ class Service:
         elif "working directory" in text or "no such file" in text:
             stage, reason, retryable = "preflight_failed", "cwd_unavailable", False
             suggestion = "Verify --cwd exists on the remote host."
+        elif "no module named" in text or "command not found" in text or "not found" in text:
+            stage, reason, retryable = "environment_failed", "dependency_missing", False
+            suggestion = "Install the missing executable or package in the non-interactive execution environment."
+        elif "failed" in text and ("pytest" in text or "tests/" in text):
+            stage, reason, retryable = "test_failed", "test_assertion_failed", False
+            suggestion = "Inspect the bounded test failure and fix the failing assertion or implementation."
+        elif any(marker in text for marker in ("validation failed", "threshold", "gate failed")):
+            stage, reason, retryable = "validation_failed", "quality_gate_failed", False
+            suggestion = "Inspect the reported validation gate and its measured value."
+        elif any(marker in text for marker in ("connection reset", "temporarily unavailable", "timed out connecting")):
+            stage, reason, retryable = "infrastructure_failed", "transient_connection", True
+            suggestion = "Retry the same idempotent submission after connectivity recovers."
+        elif result.get("exit_code") in {137, 143}:
+            stage, reason, retryable = "runtime_failed", "terminated_by_signal", True
+            suggestion = "Check memory/resource limits and scheduler cancellation history before retrying."
         elif result.get("state") == "timed_out":
             stage, reason, retryable = "timed_out", "timeout", True
             suggestion = "Increase --timeout or inspect the bounded logs."
@@ -655,8 +741,10 @@ class Service:
 
     def cancel(self, job_id: str, grace_seconds: float) -> dict[str, Any]:
         job = self.require(job_id)
+        if job["state"] in TERMINAL_STATES:
+            return {**self.summary(job), "cancel_applied": False, "cancel_outcome": "already_terminal"}
         job = self.backends[job["backend"]].cancel(job, grace_seconds)  # type: ignore[attr-defined]
-        return self.summary(job)
+        return {**self.summary(job), "cancel_applied": job["state"] == "cancelled", "cancel_outcome": "cancelled" if job["state"] == "cancelled" else "already_terminal"}
 
     def list(
         self,
@@ -736,6 +824,25 @@ class Service:
             result["truncated"] = result["truncated"] or truncated
         return result
 
+    def captured_logs(self, job: dict[str, Any]) -> list[dict[str, Any]]:
+        paths = job.get("capture_logs") or []
+        if not paths:
+            return []
+        if job["backend"] in {"ssh", "slurm"}:
+            backend = self.backends[job["backend"]]
+            reader = getattr(backend, "read_capture_logs", None)
+            return reader(job, paths, self.settings.log_tail_lines, self.settings.max_return_bytes) if reader else []
+        cwd = Path(job["cwd"] or ".")
+        each = max(1, self.settings.max_return_bytes // max(1, len(paths)))
+        items = []
+        for declared in paths:
+            resolved = Path(declared)
+            if not resolved.is_absolute():
+                resolved = cwd / resolved
+            data, truncated = _tail_file(resolved, self.settings.log_tail_lines, each)
+            items.append({"path": declared, "exists": resolved.is_file(), "tail": data, "truncated": truncated})
+        return items
+
     def inspect(self, job_id: str) -> dict[str, Any]:
         job = self.require(job_id)
         return {
@@ -747,6 +854,10 @@ class Service:
             "stdout_path": job["stdout_path"],
             "stderr_path": job["stderr_path"],
             "artifact_paths": job["artifact_paths"],
+            "capture_logs": job.get("capture_logs", []),
+            "resources": job.get("resources", {}),
+            "environment_snapshot": job.get("environment_snapshot", {}),
+            "phase": job.get("phase"),
             "queue_order": job.get("queue_order"),
             "events": self.store.events(job_id),
             "error": job["error"],
@@ -808,6 +919,10 @@ class Service:
         created = parse_time(job.get("created_at"))
         started = parse_time(job.get("started_at"))
         finished = parse_time(job.get("finished_at"))
+        if created and started and started < created:
+            created = started
+        if started and finished and finished < started:
+            finished = started
         now = datetime.now(timezone.utc)
         elapsed_start = started or created
         elapsed_end = finished or now
@@ -833,12 +948,19 @@ class Service:
             "job_id": job["job_id"], "client_request_id": job.get("client_request_id"),
             "name": job["name"], "backend": job["backend"], "host": job["host"],
             "state": job["state"], "pid": job["pid"], "backend_id": job["backend_id"],
-            "created_at": job["created_at"], "updated_at": job["updated_at"],
-            "started_at": job["started_at"], "finished_at": job["finished_at"],
+            "created_at": created.isoformat().replace("+00:00", "Z") if created else job["created_at"], "updated_at": job["updated_at"],
+            "started_at": started.isoformat().replace("+00:00", "Z") if started else None, "finished_at": finished.isoformat().replace("+00:00", "Z") if finished else None,
             "mcp_task_ttl_ms": job.get("mcp_task_ttl_ms"),
             "queue": job.get("queue_name"),
             "device": job.get("device"),
             "device_mode": job.get("device_mode"),
+            "resources": job.get("resources", {}),
+            "phase": (
+                "completed"
+                if job["state"] in TERMINAL_STATES and job.get("phase") in {None, "queued", "starting", "running"}
+                else job.get("phase") or job["state"]
+            ),
+            "heartbeat_at": job.get("last_output_at") or job.get("updated_at"),
             "queue_wait_seconds": round(queue_wait, 3) if queue_wait is not None else None,
             "elapsed_seconds": round(elapsed, 3),
             "duration_seconds": round(duration, 3) if duration is not None else None,
