@@ -146,6 +146,8 @@ Release evidence is model- and commit-specific. The checked-in suite does not
 carry numbers from earlier versions or from a different model. Run the v0.8
 benchmarks, inspect every raw record, then publish a dated report with model,
 config hash, git commit, skipped workloads, and all failures in the denominator.
+The reviewed [v0.8 evidence report](metric/results/v0.8-report.md) includes the
+complete raw records and analysis summaries rather than a selected score.
 
 ## Try the recovery story in 30 seconds
 

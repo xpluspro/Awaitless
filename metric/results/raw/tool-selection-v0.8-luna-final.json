@@ -1,0 +1,1767 @@
+{
+  "summary": {
+    "schema_version": 1,
+    "record_type": "tool_selection_summary",
+    "suite": "awaitless-tool-selection-v0.8",
+    "recorded_at": "2026-08-19T15:48:47.051464Z",
+    "scenario_count": 20,
+    "expected_model": "gpt-5.6-luna",
+    "observed_models": [
+      "gpt-5.6-luna"
+    ],
+    "provenance": {
+      "awaitless_version": "0.8.0",
+      "awaitless_package_file": "/Users/xplus/Code/mcp/Awaitless/src/awaitless/mcp_server.py",
+      "git_commit": "dc89bb1ea13a6da191841ef06cb79812009b09f3",
+      "git_dirty": false,
+      "git_untracked_files": [
+        "uv.lock"
+      ],
+      "config_sha256": "8e9b0bb20c3b13c9676f2abc9e4df26082f39c4f4e44df40ea6572c579493675"
+    },
+    "first_tool_correct": {
+      "numerator": 20,
+      "denominator": 20,
+      "rate": 1.0
+    },
+    "final_task_completed": {
+      "numerator": 20,
+      "denominator": 20,
+      "rate": 1.0
+    },
+    "unnecessary_calls": 0,
+    "incorrect_polling_scenarios": 0,
+    "duplicate_submission_scenarios": 0,
+    "artifact_consumption": {
+      "numerator": 2,
+      "denominator": 2
+    },
+    "recovery_without_duplicate_execution": {
+      "numerator": 6,
+      "denominator": 6,
+      "rate": 1.0
+    },
+    "tokens": {
+      "input": 47868,
+      "output": 2719,
+      "total": 50587
+    },
+    "release_gate": {
+      "tool_selection_at_least_95_percent": true,
+      "all_scenarios_completed": true,
+      "recovery_has_no_duplicate_execution": true,
+      "all_responses_match_model": true,
+      "passed": true
+    }
+  },
+  "scenarios": [
+    {
+      "scenario_id": "quick-command",
+      "tags": [],
+      "expected_calls": [
+        "run"
+      ],
+      "observed_calls": [
+        {
+          "name": "run",
+          "arguments": {
+            "command": [
+              "python",
+              "-m",
+              "pytest",
+              "tests/test_util.py"
+            ],
+            "inline_timeout_seconds": 30,
+            "timeout_seconds": 120,
+            "name": "pytest-test-util"
+          }
+        }
+      ],
+      "final": {
+        "command": "python -m pytest tests/test_util.py",
+        "state": "succeeded",
+        "exit_code": 0,
+        "job_id": "job_quick",
+        "delivery": "inline"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2095,
+        "output_tokens": 190,
+        "total_tokens": 2285
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "quick-command:1",
+          "duration_seconds": 2.593035,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "run"
+          ],
+          "assistant_message_sha256": "e2fbd4693a58d04fc48cf9fa1bee9ccb078dd1443f2815b74a347ae5da685629",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1914,
+            "completion_tokens": 66,
+            "total_tokens": 1980,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 19
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "quick-command:2",
+          "duration_seconds": 4.95266,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "f7dd6725f21e835ee66ac6ed84407163fe5d345042ec72db3058b786830457c9",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 181,
+            "completion_tokens": 124,
+            "total_tokens": 305,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 82
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "long-command-unknown",
+      "tags": [],
+      "expected_calls": [
+        "run",
+        "wait_for_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "run",
+          "arguments": {
+            "command": [
+              "./build.sh"
+            ],
+            "inline_timeout_seconds": 10,
+            "timeout_seconds": 3600,
+            "name": "build"
+          }
+        },
+        {
+          "name": "wait_for_job",
+          "arguments": {
+            "job_id": "job_long",
+            "timeout_seconds": 3600
+          }
+        }
+      ],
+      "final": {
+        "exit_code": 0,
+        "status": "succeeded"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 4091,
+        "output_tokens": 114,
+        "total_tokens": 4205
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "long-command-unknown:1",
+          "duration_seconds": 3.546451,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "run"
+          ],
+          "assistant_message_sha256": "827272dc74f53475c98cf8bc182ab653c88723044cc968348d820fb321b33774",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1907,
+            "completion_tokens": 55,
+            "total_tokens": 1962,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 17
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "long-command-unknown:2",
+          "duration_seconds": 2.252194,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_job"
+          ],
+          "assistant_message_sha256": "d6ec774be49d8573883e6b3ba6755599d9039cc643a8b6c790dbf5e362a02cbb",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1969,
+            "completion_tokens": 41,
+            "total_tokens": 2010,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 12
+          }
+        },
+        {
+          "request_index": 3,
+          "phase": "long-command-unknown:3",
+          "duration_seconds": 3.276308,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "145c6a93f4176b96709ab81be557b279e8eff4e62078e932e59a73a24bac7156",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 215,
+            "completion_tokens": 18,
+            "total_tokens": 233,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": null
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "explicit-async",
+      "tags": [],
+      "expected_calls": [
+        "submit_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "submit_job",
+          "arguments": {
+            "command": [
+              "./train.sh"
+            ],
+            "name": "train.sh"
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_async",
+        "state": "running"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2044,
+        "output_tokens": 92,
+        "total_tokens": 2136
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "explicit-async:1",
+          "duration_seconds": 2.458898,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "submit_job"
+          ],
+          "assistant_message_sha256": "755509ec5b826127dc53e75449d319969f1a931d35af470adfcedf256db6214c",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1903,
+            "completion_tokens": 54,
+            "total_tokens": 1957,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 26
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "explicit-async:2",
+          "duration_seconds": 3.181348,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "1d1cc596b30ecf2ddbfcee5208cdade182620831cccc111bff6cebfc9054cc44",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 141,
+            "completion_tokens": 38,
+            "total_tokens": 179,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 18
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "fan-out-two",
+      "tags": [],
+      "expected_calls": [
+        "submit_job",
+        "submit_job",
+        "wait_for_completions"
+      ],
+      "observed_calls": [
+        {
+          "name": "submit_job",
+          "arguments": {
+            "command": [
+              "./case-a"
+            ],
+            "name": "case-a"
+          }
+        },
+        {
+          "name": "submit_job",
+          "arguments": {
+            "command": [
+              "./case-b"
+            ],
+            "name": "case-b"
+          }
+        },
+        {
+          "name": "wait_for_completions",
+          "arguments": {
+            "job_ids": [
+              "job_a",
+              "job_b"
+            ],
+            "timeout_seconds": 30
+          }
+        }
+      ],
+      "final": {
+        "case-a": {
+          "state": "succeeded",
+          "exit_code": 0
+        },
+        "case-b": {
+          "state": "succeeded",
+          "exit_code": 0
+        }
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 4254,
+        "output_tokens": 174,
+        "total_tokens": 4428
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "fan-out-two:1",
+          "duration_seconds": 3.370417,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "submit_job",
+            "submit_job"
+          ],
+          "assistant_message_sha256": "439d7b3ac7f1a55ae94cdcf409b8eed5e2db22119595d7dbb0eaa748439a7ed0",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1912,
+            "completion_tokens": 94,
+            "total_tokens": 2006,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 28
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "fan-out-two:2",
+          "duration_seconds": 2.403885,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_completions"
+          ],
+          "assistant_message_sha256": "fc6f0eedbfee0e6edcc9b614bf14e7f47f9df2be33e6560e8fba3e4259455b0b",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 2018,
+            "completion_tokens": 46,
+            "total_tokens": 2064,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 12
+          }
+        },
+        {
+          "request_index": 3,
+          "phase": "fan-out-two:3",
+          "duration_seconds": 2.221435,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "a61cd987d86c4d4a184cf4fe1628b5cbbad1d43dbda429accb2e3565298bf85e",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 324,
+            "completion_tokens": 34,
+            "total_tokens": 358,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": null
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "disconnect-recovery",
+      "tags": [
+        "recovery"
+      ],
+      "expected_calls": [
+        "wait_for_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_job",
+          "arguments": {
+            "job_id": "job_recover",
+            "timeout_seconds": 30
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_recover",
+        "state": "succeeded",
+        "exit_code": 0
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2075,
+        "output_tokens": 185,
+        "total_tokens": 2260
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "disconnect-recovery:1",
+          "duration_seconds": 2.334656,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_job"
+          ],
+          "assistant_message_sha256": "078dab4eab1dae77cc13b9c3379cd46f3527930760260f55e55f08412419ab7d",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1914,
+            "completion_tokens": 41,
+            "total_tokens": 1955,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 12
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "disconnect-recovery:2",
+          "duration_seconds": 3.693765,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "ae39cd9643b024524a59a04b648947105c8674d9a621c6d334d88ed707677867",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 161,
+            "completion_tokens": 144,
+            "total_tokens": 305,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 117
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "status-now",
+      "tags": [],
+      "expected_calls": [
+        "get_job_status"
+      ],
+      "observed_calls": [
+        {
+          "name": "get_job_status",
+          "arguments": {
+            "job_id": "job_status"
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_status",
+        "state": "running",
+        "phase": "compile"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2050,
+        "output_tokens": 78,
+        "total_tokens": 2128
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "status-now:1",
+          "duration_seconds": 2.041298,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "get_job_status"
+          ],
+          "assistant_message_sha256": "887c5aac5ae7ace6c763339568710b543e3d5aa2184973065926082088db856e",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1906,
+            "completion_tokens": 33,
+            "total_tokens": 1939,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 10
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "status-now:2",
+          "duration_seconds": 5.452475,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "ca979aa0649d468284f42c8615b8f1ba7653436c43f9f28153ccc28242c1a2f5",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 144,
+            "completion_tokens": 45,
+            "total_tokens": 189,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 21
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "failed-log-diagnostics",
+      "tags": [],
+      "expected_calls": [
+        "get_job_logs"
+      ],
+      "observed_calls": [
+        {
+          "name": "get_job_logs",
+          "arguments": {
+            "job_id": "job_failed",
+            "tail": 100,
+            "max_bytes": 12000
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_failed",
+        "state": "failed",
+        "summary": "The job failed because CMake could not find a compiler.",
+        "stderr_tail": "CMake Error: compiler missing",
+        "truncated": false
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2073,
+        "output_tokens": 125,
+        "total_tokens": 2198
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "failed-log-diagnostics:1",
+          "duration_seconds": 3.251691,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "get_job_logs"
+          ],
+          "assistant_message_sha256": "ebc553754931f65092c0d1e83e3c09735b3c813c3864c05382fb23d5072d36b4",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1907,
+            "completion_tokens": 46,
+            "total_tokens": 1953,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 13
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "failed-log-diagnostics:2",
+          "duration_seconds": 3.117593,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "8c749380e0aebf8842e770da4e95c6e20cd0d644d018f0d903d8e74da22c37b6",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 166,
+            "completion_tokens": 79,
+            "total_tokens": 245,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 30
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "idempotent-lost-create",
+      "tags": [
+        "recovery"
+      ],
+      "expected_calls": [
+        "submit_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "submit_job",
+          "arguments": {
+            "command": [
+              "./benchmark"
+            ],
+            "client_request_id": "bench-42"
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_bench",
+        "state": "running",
+        "idempotent_replay": true
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2097,
+        "output_tokens": 98,
+        "total_tokens": 2195
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "idempotent-lost-create:1",
+          "duration_seconds": 2.478234,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "submit_job"
+          ],
+          "assistant_message_sha256": "439001c4d879d79814b596d40ef5d81d3303f05771019f267551a6975e20bd92",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1924,
+            "completion_tokens": 71,
+            "total_tokens": 1995,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 41
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "idempotent-lost-create:2",
+          "duration_seconds": 1.756781,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "33432bc66b1de62a344924324337ed245c5d34e172b769ad7f6f2347167c663a",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 173,
+            "completion_tokens": 27,
+            "total_tokens": 200,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": null
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "known-id-continuation",
+      "tags": [
+        "recovery"
+      ],
+      "expected_calls": [
+        "wait_for_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_job",
+          "arguments": {
+            "job_id": "job_known",
+            "timeout_seconds": 30
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_known",
+        "state": "succeeded",
+        "exit_code": 0
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2047,
+        "output_tokens": 115,
+        "total_tokens": 2162
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "known-id-continuation:1",
+          "duration_seconds": 3.089797,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_job"
+          ],
+          "assistant_message_sha256": "3a5b33069739c450bb4288d5d96affe0cb0727c4e2fe9072279f391adb6ce2a2",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1901,
+            "completion_tokens": 49,
+            "total_tokens": 1950,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 21
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "known-id-continuation:2",
+          "duration_seconds": 4.505719,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "600be5c4e576abab783f2dec0dfef58e2d8b2b1cbaa315d3fa8c67d01656ca3f",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 146,
+            "completion_tokens": 66,
+            "total_tokens": 212,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 40
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "mcp-tasks-client",
+      "tags": [],
+      "expected_calls": [
+        "run_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "run_job",
+          "arguments": {
+            "client_request_id": "task-compile-7",
+            "command": [
+              "./compile"
+            ]
+          }
+        }
+      ],
+      "final": {
+        "resultType": "task",
+        "taskId": "job_task",
+        "status": "working"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2077,
+        "output_tokens": 121,
+        "total_tokens": 2198
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "mcp-tasks-client:1",
+          "duration_seconds": 3.266038,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "run_job"
+          ],
+          "assistant_message_sha256": "c1e49db5e6421abef02b1e3176b508ad9ee11d83a5f76616dfb2cfff48b6d352",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1915,
+            "completion_tokens": 54,
+            "total_tokens": 1969,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 22
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "mcp-tasks-client:2",
+          "duration_seconds": 5.113703,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "d822d9d1e4569a4c8f696e8e85d74c86f8eda2e690d30d1ae67271b44ced9b1d",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 162,
+            "completion_tokens": 67,
+            "total_tokens": 229,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 42
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "completion-cursor-resume",
+      "tags": [
+        "recovery"
+      ],
+      "expected_calls": [
+        "wait_for_completions"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_completions",
+          "arguments": {
+            "after_cursor": "cmp_7",
+            "job_ids": [
+              "job_a",
+              "job_b"
+            ],
+            "limit": 50,
+            "timeout_seconds": 30
+          }
+        }
+      ],
+      "final": {
+        "completions": [
+          {
+            "completion_id": "cmp_8",
+            "job_id": "job_b",
+            "result": {
+              "state": "succeeded",
+              "exit_code": 0
+            }
+          }
+        ],
+        "next_cursor": "cmp_8",
+        "active_job_ids": []
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2109,
+        "output_tokens": 188,
+        "total_tokens": 2297
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "completion-cursor-resume:1",
+          "duration_seconds": 6.877394,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_completions"
+          ],
+          "assistant_message_sha256": "ee09cbdaa1fedd77e3b01950958d6ddd897a9e7c11af805204bfca1ff7ecd730",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1909,
+            "completion_tokens": 78,
+            "total_tokens": 1987,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 33
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "completion-cursor-resume:2",
+          "duration_seconds": 4.400505,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "42ec09c0bdcca1488a31e7e7b7ce0d40c203710a2d84ab53753d9fb63a3de77c",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 200,
+            "completion_tokens": 110,
+            "total_tokens": 310,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 57
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "waiter-timeout-recovery",
+      "tags": [
+        "recovery"
+      ],
+      "expected_calls": [
+        "wait_for_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_job",
+          "arguments": {
+            "job_id": "job_wait",
+            "timeout_seconds": 30
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_wait",
+        "state": "succeeded",
+        "exit_code": 0
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2079,
+        "output_tokens": 105,
+        "total_tokens": 2184
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "waiter-timeout-recovery:1",
+          "duration_seconds": 2.255238,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_job"
+          ],
+          "assistant_message_sha256": "5e09e368129edbfc792b6cf82d476d207b305ceb57288ccbd9b763ab3143944a",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1917,
+            "completion_tokens": 47,
+            "total_tokens": 1964,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 19
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "waiter-timeout-recovery:2",
+          "duration_seconds": 3.071531,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "787ac6e0278ce612b371f9b5d670a99ce17681ca0e3977a0aefb2b06ba2c783f",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 162,
+            "completion_tokens": 58,
+            "total_tokens": 220,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 32
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "completion-disconnect-replay",
+      "tags": [
+        "recovery"
+      ],
+      "expected_calls": [
+        "wait_for_completions"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_completions",
+          "arguments": {
+            "after_cursor": "cmp_12",
+            "job_ids": [
+              "job_x",
+              "job_y"
+            ],
+            "limit": 50,
+            "timeout_seconds": 0
+          }
+        }
+      ],
+      "final": {
+        "completions": [
+          {
+            "completion_id": "cmp_13",
+            "job_id": "job_x",
+            "result": {
+              "state": "failed",
+              "exit_code": 2
+            }
+          }
+        ],
+        "next_cursor": "cmp_13",
+        "active_job_ids": [
+          "job_y"
+        ]
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2125,
+        "output_tokens": 177,
+        "total_tokens": 2302
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "completion-disconnect-replay:1",
+          "duration_seconds": 3.582911,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_completions"
+          ],
+          "assistant_message_sha256": "eb7342ef0730e53209b85548d5120b070e09a019807e49569cf5ec555e5733ea",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1916,
+            "completion_tokens": 74,
+            "total_tokens": 1990,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 29
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "completion-disconnect-replay:2",
+          "duration_seconds": 6.725252,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "ca09e47e99d11e23a4e128132ace12e552ce0bf32251a696f5d85659ef15b551",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 209,
+            "completion_tokens": 103,
+            "total_tokens": 312,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 48
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "quiet-heartbeat-snapshot",
+      "tags": [],
+      "expected_calls": [
+        "get_job_status"
+      ],
+      "observed_calls": [
+        {
+          "name": "get_job_status",
+          "arguments": {
+            "job_id": "job_quiet"
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_quiet",
+        "state": "running",
+        "last_output_at": null,
+        "last_heartbeat_at": "2026-08-19T08:00:00Z"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2095,
+        "output_tokens": 133,
+        "total_tokens": 2228
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "quiet-heartbeat-snapshot:1",
+          "duration_seconds": 2.797215,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "get_job_status"
+          ],
+          "assistant_message_sha256": "672db63fab05e0eb3c10711a1a7b66858102fdf0626bfd898f334146a5066d7c",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1917,
+            "completion_tokens": 47,
+            "total_tokens": 1964,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 23
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "quiet-heartbeat-snapshot:2",
+          "duration_seconds": 6.349624,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "badc59b88590dd22a8a037f08532e56c432fce7d7b40c522378038af3f56f499",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 178,
+            "completion_tokens": 86,
+            "total_tokens": 264,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 40
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "stalled-log-inspection",
+      "tags": [],
+      "expected_calls": [
+        "get_job_logs"
+      ],
+      "observed_calls": [
+        {
+          "name": "get_job_logs",
+          "arguments": {
+            "job_id": "job_stalled",
+            "max_bytes": 12000,
+            "tail": 200
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_stalled",
+        "state": "stalled",
+        "diagnosis": "The job is stalled during the download phase. The bounded log output contains no further error details.",
+        "logs": "phase=download",
+        "logs_truncated": true
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2073,
+        "output_tokens": 154,
+        "total_tokens": 2227
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "stalled-log-inspection:1",
+          "duration_seconds": 2.296132,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "get_job_logs"
+          ],
+          "assistant_message_sha256": "79f31a438366f81f44d528c8ff974dbce48bbe2f191abc99d0ad3b9adffba88d",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1907,
+            "completion_tokens": 47,
+            "total_tokens": 1954,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 13
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "stalled-log-inspection:2",
+          "duration_seconds": 5.076258,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "7736466eca2dad4d58af037acffab4d0e7e9e0de1c35d8e50ece761adf8042b8",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 166,
+            "completion_tokens": 107,
+            "total_tokens": 273,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 51
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "artifact-consumption",
+      "tags": [],
+      "expected_calls": [
+        "wait_for_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_job",
+          "arguments": {
+            "job_id": "job_artifact",
+            "timeout_seconds": 30
+          }
+        }
+      ],
+      "final": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": true,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2102,
+        "output_tokens": 58,
+        "total_tokens": 2160
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "artifact-consumption:1",
+          "duration_seconds": 2.575193,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_job"
+          ],
+          "assistant_message_sha256": "a3693aa4bb6372a2cb101998b8b359bf25907d23305c413ef3cfb53038832d58",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1909,
+            "completion_tokens": 38,
+            "total_tokens": 1947,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 9
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "artifact-consumption:2",
+          "duration_seconds": 2.951316,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "18786fcece0d18b9f63b08e5ddce9db2f196c18b324246db7a3e97ccae0f5ce6",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 193,
+            "completion_tokens": 20,
+            "total_tokens": 213,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": null
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "fast-command-default",
+      "tags": [],
+      "expected_calls": [
+        "run"
+      ],
+      "observed_calls": [
+        {
+          "name": "run",
+          "arguments": {
+            "command": [
+              "printf",
+              "ok"
+            ]
+          }
+        }
+      ],
+      "final": {
+        "delivery": "inline",
+        "job_id": "job_fast",
+        "state": "succeeded",
+        "exit_code": 0
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2057,
+        "output_tokens": 141,
+        "total_tokens": 2198
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "fast-command-default:1",
+          "duration_seconds": 2.750198,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "run"
+          ],
+          "assistant_message_sha256": "69cb3f17ffa6f2c64be987f60939319d77a91bb7a6a566632ee66e1a308840be",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1908,
+            "completion_tokens": 50,
+            "total_tokens": 1958,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 28
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "fast-command-default:2",
+          "duration_seconds": 5.597226,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "7f228fd94398794d74de13f77ac01293bd529fbdaa9d4a6b597681beef3bd2d6",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 149,
+            "completion_tokens": 91,
+            "total_tokens": 240,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 61
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "default-queued-resource",
+      "tags": [],
+      "expected_calls": [
+        "run",
+        "wait_for_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "run",
+          "arguments": {
+            "command": [
+              "./npu-test"
+            ]
+          }
+        },
+        {
+          "name": "wait_for_job",
+          "arguments": {
+            "job_id": "job_queue",
+            "timeout_seconds": 3600
+          }
+        }
+      ],
+      "final": {
+        "command": [
+          "./npu-test"
+        ],
+        "delivery": "detached",
+        "job_id": "job_queue",
+        "state": "succeeded",
+        "exit_code": 0
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 4082,
+        "output_tokens": 243,
+        "total_tokens": 4325
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "default-queued-resource:1",
+          "duration_seconds": 3.973285,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "run"
+          ],
+          "assistant_message_sha256": "2e1d56c12e57cc3122442a6cdd446feb9c35edb56baccbf47979571363b21842",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1914,
+            "completion_tokens": 117,
+            "total_tokens": 2031,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 94
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "default-queued-resource:2",
+          "duration_seconds": 2.435893,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_job"
+          ],
+          "assistant_message_sha256": "4f320da1161a23f2a8c8dc376fec69d586777e70d3ee4de051d03329088decd7",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1961,
+            "completion_tokens": 39,
+            "total_tokens": 2000,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 10
+          }
+        },
+        {
+          "request_index": 3,
+          "phase": "default-queued-resource:3",
+          "duration_seconds": 2.752365,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "14f3b0f9cc30919cc7dfe7e2ca6f98f44a1159a54d0991961c1843b497e03947",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 207,
+            "completion_tokens": 87,
+            "total_tokens": 294,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 48
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "single-known-not-completions",
+      "tags": [],
+      "expected_calls": [
+        "wait_for_job"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_job",
+          "arguments": {
+            "job_id": "job_one"
+          }
+        }
+      ],
+      "final": {
+        "job_id": "job_one",
+        "state": "succeeded",
+        "exit_code": 0
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": null,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2052,
+        "output_tokens": 98,
+        "total_tokens": 2150
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "single-known-not-completions:1",
+          "duration_seconds": 2.983612,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_job"
+          ],
+          "assistant_message_sha256": "f4e13746207a3b4ed99634dfea82cbd1915da5bb42cf06de1ec516777ed04054",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1906,
+            "completion_tokens": 31,
+            "total_tokens": 1937,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 8
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "single-known-not-completions:2",
+          "duration_seconds": 2.296976,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "c68728e5fc55b70edb0139823aa96a735187884133636221b908eec7b1bcd253",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 146,
+            "completion_tokens": 67,
+            "total_tokens": 213,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 41
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "batch-completion-artifact",
+      "tags": [],
+      "expected_calls": [
+        "wait_for_completions"
+      ],
+      "observed_calls": [
+        {
+          "name": "wait_for_completions",
+          "arguments": {
+            "job_ids": [
+              "job_m",
+              "job_n"
+            ],
+            "after_cursor": null,
+            "limit": 50,
+            "timeout_seconds": 30
+          }
+        }
+      ],
+      "final": {
+        "job_m": {
+          "state": "succeeded",
+          "exit_code": 0
+        },
+        "job_n": {
+          "state": "succeeded",
+          "exit_code": 0
+        },
+        "job_n_result_json_artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "metrics": {
+        "first_tool_correct": true,
+        "unnecessary_calls": 0,
+        "incorrect_polling": false,
+        "duplicate_submission": false,
+        "artifact_consumed": true,
+        "tool_sequence_correct": true,
+        "final_task_completed": true,
+        "input_tokens": 2191,
+        "output_tokens": 130,
+        "total_tokens": 2321
+      },
+      "error": null,
+      "usage": [
+        {
+          "request_index": 1,
+          "phase": "batch-completion-artifact:1",
+          "duration_seconds": 2.654816,
+          "attempts": 1,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "wait_for_completions"
+          ],
+          "assistant_message_sha256": "e1c7a4b43f8dc413781489e499ccbf0777a610b090c8a6f778e44166e87ef894",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 1918,
+            "completion_tokens": 70,
+            "total_tokens": 1988,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": 27
+          }
+        },
+        {
+          "request_index": 2,
+          "phase": "batch-completion-artifact:2",
+          "duration_seconds": 2.091083,
+          "attempts": 1,
+          "finish_reason": "stop",
+          "tool_names": [],
+          "assistant_message_sha256": "30df0d9f6d5cce689ed92623a659a2c13ebae9dcee362155fd5a3500d79e1162",
+          "model": "gpt-5.6-luna",
+          "system_fingerprint": null,
+          "usage": {
+            "prompt_tokens": 273,
+            "completion_tokens": 60,
+            "total_tokens": 333,
+            "prompt_cache_hit_tokens": null,
+            "prompt_cache_miss_tokens": null,
+            "reasoning_tokens": null
+          }
+        }
+      ]
+    }
+  ]
+}

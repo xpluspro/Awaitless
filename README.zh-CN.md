@@ -129,6 +129,8 @@ adaptive `run` 低摩擦地完成。参见 [v0.8 证据计划](metric/README.md#
 
 发布证据必须绑定模型、配置 hash、git commit 和日期。仓库不再把旧版本或其他模型的数字
 留在首页；运行 v0.8 benchmark 后，保留所有 raw record、失败样本和跳过原因，再发布汇总。
+已审核的 [v0.8 证据报告](metric/results/v0.8-report.md) 同时保留完整 raw 记录和分析 summary，
+不只展示有利数字。
 
 ## 30 秒体验断线恢复
 

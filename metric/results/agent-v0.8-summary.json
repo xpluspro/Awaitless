@@ -1,0 +1,1064 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-19T15:49:39.720752Z",
+  "sources": [
+    "/Users/xplus/Code/mcp/Awaitless/metric/results/raw/agent-v0.8.jsonl"
+  ],
+  "record_count": 60,
+  "experiment_ids": [
+    "agent-v0.8-real-workload-20260819T152838305501Z-7014d9195d"
+  ],
+  "overall": {
+    "awaitless": {
+      "arm": "awaitless",
+      "n_records": 20,
+      "n_cases": 20,
+      "n_errors": 0,
+      "rates": {
+        "result_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "state_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "exit_code_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "artifact_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "log_contract_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "recovery_success": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "cancel_cleanup_success": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "ci95_low": null,
+          "ci95_high": null
+        },
+        "duplicate_launch": {
+          "successes": 0,
+          "n": 20,
+          "rate": 0.0,
+          "ci95_low": 0.0,
+          "ci95_high": 0.16112515805281938
+        }
+      },
+      "distributions": {
+        "agent_tool_calls": {
+          "n": 20,
+          "median": 2.0,
+          "p90": 2.0,
+          "mean": 2.0,
+          "sum": 40.0
+        },
+        "agent_visible_bytes": {
+          "n": 20,
+          "median": 5013.0,
+          "p90": 5013.0,
+          "mean": 5012.4,
+          "sum": 100248.0
+        },
+        "system_command_invocations": {
+          "n": 20,
+          "median": 2.0,
+          "p90": 2.0,
+          "mean": 2.0,
+          "sum": 40.0
+        },
+        "duplicated_log_bytes": {
+          "n": 20,
+          "median": 0.0,
+          "p90": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "wall_time_seconds": {
+          "n": 20,
+          "median": 9.687339999999999,
+          "p90": 14.465469800000001,
+          "mean": 10.0762281,
+          "sum": 201.524562
+        },
+        "cpu_time_seconds": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "peak_rss_bytes": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "disk_bytes": {
+          "n": 20,
+          "median": 70415.0,
+          "p90": 70415.0,
+          "mean": 70414.7,
+          "sum": 1408294.0
+        },
+        "ssh_request_count": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "manual_interventions": {
+          "n": 20,
+          "median": 0.0,
+          "p90": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        }
+      },
+      "usage_tokens": {
+        "n": 20,
+        "median": 2078.5,
+        "p90": 2093.8,
+        "mean": 2079.7,
+        "sum": 41594.0
+      },
+      "token_coverage": {
+        "records_with_usage": 20,
+        "records": 20,
+        "complete": true
+      },
+      "cost_per_correct_job": {
+        "correct_jobs": 20,
+        "agent_tool_calls": 2.0,
+        "agent_visible_bytes": 5012.4,
+        "usage_tokens": 2079.7
+      },
+      "arm_metadata": {
+        "custom_glue_sloc": 0,
+        "custom_glue_files": 0,
+        "supported_backends": [
+          "local",
+          "ssh",
+          "slurm"
+        ]
+      },
+      "experiment_ids": [
+        "agent-v0.8-real-workload-20260819T152838305501Z-7014d9195d"
+      ]
+    },
+    "tmux_plain": {
+      "arm": "tmux_plain",
+      "n_records": 20,
+      "n_cases": 20,
+      "n_errors": 0,
+      "rates": {
+        "result_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "state_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "exit_code_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "artifact_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "log_contract_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "recovery_success": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "cancel_cleanup_success": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "ci95_low": null,
+          "ci95_high": null
+        },
+        "duplicate_launch": {
+          "successes": 0,
+          "n": 20,
+          "rate": 0.0,
+          "ci95_low": 0.0,
+          "ci95_high": 0.16112515805281938
+        }
+      },
+      "distributions": {
+        "agent_tool_calls": {
+          "n": 20,
+          "median": 3.0,
+          "p90": 3.0,
+          "mean": 3.0,
+          "sum": 60.0
+        },
+        "agent_visible_bytes": {
+          "n": 20,
+          "median": 2655.0,
+          "p90": 2655.0,
+          "mean": 2654.85,
+          "sum": 53097.0
+        },
+        "system_command_invocations": {
+          "n": 20,
+          "median": 5.0,
+          "p90": 5.0,
+          "mean": 5.0,
+          "sum": 100.0
+        },
+        "duplicated_log_bytes": {
+          "n": 20,
+          "median": 0.0,
+          "p90": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "wall_time_seconds": {
+          "n": 20,
+          "median": 10.233461,
+          "p90": 20.445256600000008,
+          "mean": 12.757106,
+          "sum": 255.14212
+        },
+        "cpu_time_seconds": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "peak_rss_bytes": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "disk_bytes": {
+          "n": 20,
+          "median": 136.0,
+          "p90": 136.0,
+          "mean": 135.85,
+          "sum": 2717.0
+        },
+        "ssh_request_count": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "manual_interventions": {
+          "n": 20,
+          "median": 0.0,
+          "p90": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        }
+      },
+      "usage_tokens": {
+        "n": 20,
+        "median": 2149.0,
+        "p90": 2165.6,
+        "mean": 2145.5,
+        "sum": 42910.0
+      },
+      "token_coverage": {
+        "records_with_usage": 20,
+        "records": 20,
+        "complete": true
+      },
+      "cost_per_correct_job": {
+        "correct_jobs": 20,
+        "agent_tool_calls": 3.0,
+        "agent_visible_bytes": 2654.85,
+        "usage_tokens": 2145.5
+      },
+      "arm_metadata": {
+        "custom_glue_sloc": 0,
+        "custom_glue_files": 0,
+        "supported_backends": [
+          "local"
+        ]
+      },
+      "experiment_ids": [
+        "agent-v0.8-real-workload-20260819T152838305501Z-7014d9195d"
+      ]
+    },
+    "tmux_wrapped": {
+      "arm": "tmux_wrapped",
+      "n_records": 20,
+      "n_cases": 20,
+      "n_errors": 0,
+      "rates": {
+        "result_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "state_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "exit_code_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "artifact_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "log_contract_correct": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "recovery_success": {
+          "successes": 20,
+          "n": 20,
+          "rate": 1.0,
+          "ci95_low": 0.8388748419471806,
+          "ci95_high": 1.0
+        },
+        "cancel_cleanup_success": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "ci95_low": null,
+          "ci95_high": null
+        },
+        "duplicate_launch": {
+          "successes": 0,
+          "n": 20,
+          "rate": 0.0,
+          "ci95_low": 0.0,
+          "ci95_high": 0.16112515805281938
+        }
+      },
+      "distributions": {
+        "agent_tool_calls": {
+          "n": 20,
+          "median": 2.0,
+          "p90": 2.0,
+          "mean": 2.0,
+          "sum": 40.0
+        },
+        "agent_visible_bytes": {
+          "n": 20,
+          "median": 2800.0,
+          "p90": 2800.0,
+          "mean": 2799.6,
+          "sum": 55992.0
+        },
+        "system_command_invocations": {
+          "n": 20,
+          "median": 6.0,
+          "p90": 6.0,
+          "mean": 6.0,
+          "sum": 120.0
+        },
+        "duplicated_log_bytes": {
+          "n": 20,
+          "median": 0.0,
+          "p90": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "wall_time_seconds": {
+          "n": 20,
+          "median": 7.4674665000000005,
+          "p90": 10.6180821,
+          "mean": 8.12383975,
+          "sum": 162.476795
+        },
+        "cpu_time_seconds": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "peak_rss_bytes": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "disk_bytes": {
+          "n": 20,
+          "median": 4527.0,
+          "p90": 4527.0,
+          "mean": 4526.6,
+          "sum": 90532.0
+        },
+        "ssh_request_count": {
+          "n": 0,
+          "median": null,
+          "p90": null,
+          "mean": null,
+          "sum": null
+        },
+        "manual_interventions": {
+          "n": 20,
+          "median": 0.0,
+          "p90": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        }
+      },
+      "usage_tokens": {
+        "n": 20,
+        "median": 1332.5,
+        "p90": 1351.5,
+        "mean": 1331.0,
+        "sum": 26620.0
+      },
+      "token_coverage": {
+        "records_with_usage": 20,
+        "records": 20,
+        "complete": true
+      },
+      "cost_per_correct_job": {
+        "correct_jobs": 20,
+        "agent_tool_calls": 2.0,
+        "agent_visible_bytes": 2799.6,
+        "usage_tokens": 1331.0
+      },
+      "arm_metadata": {
+        "custom_glue_sloc": 319,
+        "custom_glue_files": 1,
+        "supported_backends": [
+          "local"
+        ]
+      },
+      "experiment_ids": [
+        "agent-v0.8-real-workload-20260819T152838305501Z-7014d9195d"
+      ]
+    }
+  },
+  "by_scenario": {
+    "recovery": {
+      "awaitless": {
+        "arm": "awaitless",
+        "n_records": 20,
+        "n_cases": 20,
+        "n_errors": 0,
+        "rates": {
+          "result_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "state_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "exit_code_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "artifact_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "log_contract_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "recovery_success": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "cancel_cleanup_success": {
+            "successes": 0,
+            "n": 0,
+            "rate": null,
+            "ci95_low": null,
+            "ci95_high": null
+          },
+          "duplicate_launch": {
+            "successes": 0,
+            "n": 20,
+            "rate": 0.0,
+            "ci95_low": 0.0,
+            "ci95_high": 0.16112515805281938
+          }
+        },
+        "distributions": {
+          "agent_tool_calls": {
+            "n": 20,
+            "median": 2.0,
+            "p90": 2.0,
+            "mean": 2.0,
+            "sum": 40.0
+          },
+          "agent_visible_bytes": {
+            "n": 20,
+            "median": 5013.0,
+            "p90": 5013.0,
+            "mean": 5012.4,
+            "sum": 100248.0
+          },
+          "system_command_invocations": {
+            "n": 20,
+            "median": 2.0,
+            "p90": 2.0,
+            "mean": 2.0,
+            "sum": 40.0
+          },
+          "duplicated_log_bytes": {
+            "n": 20,
+            "median": 0.0,
+            "p90": 0.0,
+            "mean": 0.0,
+            "sum": 0.0
+          },
+          "wall_time_seconds": {
+            "n": 20,
+            "median": 9.687339999999999,
+            "p90": 14.465469800000001,
+            "mean": 10.0762281,
+            "sum": 201.524562
+          },
+          "cpu_time_seconds": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "peak_rss_bytes": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "disk_bytes": {
+            "n": 20,
+            "median": 70415.0,
+            "p90": 70415.0,
+            "mean": 70414.7,
+            "sum": 1408294.0
+          },
+          "ssh_request_count": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "manual_interventions": {
+            "n": 20,
+            "median": 0.0,
+            "p90": 0.0,
+            "mean": 0.0,
+            "sum": 0.0
+          }
+        },
+        "usage_tokens": {
+          "n": 20,
+          "median": 2078.5,
+          "p90": 2093.8,
+          "mean": 2079.7,
+          "sum": 41594.0
+        },
+        "token_coverage": {
+          "records_with_usage": 20,
+          "records": 20,
+          "complete": true
+        },
+        "cost_per_correct_job": {
+          "correct_jobs": 20,
+          "agent_tool_calls": 2.0,
+          "agent_visible_bytes": 5012.4,
+          "usage_tokens": 2079.7
+        },
+        "arm_metadata": {
+          "custom_glue_sloc": 0,
+          "custom_glue_files": 0,
+          "supported_backends": [
+            "local",
+            "ssh",
+            "slurm"
+          ]
+        },
+        "experiment_ids": [
+          "agent-v0.8-real-workload-20260819T152838305501Z-7014d9195d"
+        ]
+      },
+      "tmux_plain": {
+        "arm": "tmux_plain",
+        "n_records": 20,
+        "n_cases": 20,
+        "n_errors": 0,
+        "rates": {
+          "result_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "state_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "exit_code_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "artifact_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "log_contract_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "recovery_success": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "cancel_cleanup_success": {
+            "successes": 0,
+            "n": 0,
+            "rate": null,
+            "ci95_low": null,
+            "ci95_high": null
+          },
+          "duplicate_launch": {
+            "successes": 0,
+            "n": 20,
+            "rate": 0.0,
+            "ci95_low": 0.0,
+            "ci95_high": 0.16112515805281938
+          }
+        },
+        "distributions": {
+          "agent_tool_calls": {
+            "n": 20,
+            "median": 3.0,
+            "p90": 3.0,
+            "mean": 3.0,
+            "sum": 60.0
+          },
+          "agent_visible_bytes": {
+            "n": 20,
+            "median": 2655.0,
+            "p90": 2655.0,
+            "mean": 2654.85,
+            "sum": 53097.0
+          },
+          "system_command_invocations": {
+            "n": 20,
+            "median": 5.0,
+            "p90": 5.0,
+            "mean": 5.0,
+            "sum": 100.0
+          },
+          "duplicated_log_bytes": {
+            "n": 20,
+            "median": 0.0,
+            "p90": 0.0,
+            "mean": 0.0,
+            "sum": 0.0
+          },
+          "wall_time_seconds": {
+            "n": 20,
+            "median": 10.233461,
+            "p90": 20.445256600000008,
+            "mean": 12.757106,
+            "sum": 255.14212
+          },
+          "cpu_time_seconds": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "peak_rss_bytes": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "disk_bytes": {
+            "n": 20,
+            "median": 136.0,
+            "p90": 136.0,
+            "mean": 135.85,
+            "sum": 2717.0
+          },
+          "ssh_request_count": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "manual_interventions": {
+            "n": 20,
+            "median": 0.0,
+            "p90": 0.0,
+            "mean": 0.0,
+            "sum": 0.0
+          }
+        },
+        "usage_tokens": {
+          "n": 20,
+          "median": 2149.0,
+          "p90": 2165.6,
+          "mean": 2145.5,
+          "sum": 42910.0
+        },
+        "token_coverage": {
+          "records_with_usage": 20,
+          "records": 20,
+          "complete": true
+        },
+        "cost_per_correct_job": {
+          "correct_jobs": 20,
+          "agent_tool_calls": 3.0,
+          "agent_visible_bytes": 2654.85,
+          "usage_tokens": 2145.5
+        },
+        "arm_metadata": {
+          "custom_glue_sloc": 0,
+          "custom_glue_files": 0,
+          "supported_backends": [
+            "local"
+          ]
+        },
+        "experiment_ids": [
+          "agent-v0.8-real-workload-20260819T152838305501Z-7014d9195d"
+        ]
+      },
+      "tmux_wrapped": {
+        "arm": "tmux_wrapped",
+        "n_records": 20,
+        "n_cases": 20,
+        "n_errors": 0,
+        "rates": {
+          "result_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "state_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "exit_code_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "artifact_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "log_contract_correct": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "recovery_success": {
+            "successes": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci95_low": 0.8388748419471806,
+            "ci95_high": 1.0
+          },
+          "cancel_cleanup_success": {
+            "successes": 0,
+            "n": 0,
+            "rate": null,
+            "ci95_low": null,
+            "ci95_high": null
+          },
+          "duplicate_launch": {
+            "successes": 0,
+            "n": 20,
+            "rate": 0.0,
+            "ci95_low": 0.0,
+            "ci95_high": 0.16112515805281938
+          }
+        },
+        "distributions": {
+          "agent_tool_calls": {
+            "n": 20,
+            "median": 2.0,
+            "p90": 2.0,
+            "mean": 2.0,
+            "sum": 40.0
+          },
+          "agent_visible_bytes": {
+            "n": 20,
+            "median": 2800.0,
+            "p90": 2800.0,
+            "mean": 2799.6,
+            "sum": 55992.0
+          },
+          "system_command_invocations": {
+            "n": 20,
+            "median": 6.0,
+            "p90": 6.0,
+            "mean": 6.0,
+            "sum": 120.0
+          },
+          "duplicated_log_bytes": {
+            "n": 20,
+            "median": 0.0,
+            "p90": 0.0,
+            "mean": 0.0,
+            "sum": 0.0
+          },
+          "wall_time_seconds": {
+            "n": 20,
+            "median": 7.4674665000000005,
+            "p90": 10.6180821,
+            "mean": 8.12383975,
+            "sum": 162.476795
+          },
+          "cpu_time_seconds": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "peak_rss_bytes": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "disk_bytes": {
+            "n": 20,
+            "median": 4527.0,
+            "p90": 4527.0,
+            "mean": 4526.6,
+            "sum": 90532.0
+          },
+          "ssh_request_count": {
+            "n": 0,
+            "median": null,
+            "p90": null,
+            "mean": null,
+            "sum": null
+          },
+          "manual_interventions": {
+            "n": 20,
+            "median": 0.0,
+            "p90": 0.0,
+            "mean": 0.0,
+            "sum": 0.0
+          }
+        },
+        "usage_tokens": {
+          "n": 20,
+          "median": 1332.5,
+          "p90": 1351.5,
+          "mean": 1331.0,
+          "sum": 26620.0
+        },
+        "token_coverage": {
+          "records_with_usage": 20,
+          "records": 20,
+          "complete": true
+        },
+        "cost_per_correct_job": {
+          "correct_jobs": 20,
+          "agent_tool_calls": 2.0,
+          "agent_visible_bytes": 2799.6,
+          "usage_tokens": 1331.0
+        },
+        "arm_metadata": {
+          "custom_glue_sloc": 319,
+          "custom_glue_files": 1,
+          "supported_backends": [
+            "local"
+          ]
+        },
+        "experiment_ids": [
+          "agent-v0.8-real-workload-20260819T152838305501Z-7014d9195d"
+        ]
+      }
+    }
+  },
+  "comparisons": [
+    {
+      "scope": "overall",
+      "reference": "awaitless",
+      "baseline": "tmux_plain",
+      "result_fidelity_delta_percentage_points": 0.0,
+      "median_agent_tool_call_reduction_percent": 33.333333333333336,
+      "p90_agent_visible_byte_reduction_percent": -88.8135593220339,
+      "usage_token_reduction_percent": 3.066884176182716,
+      "custom_glue_sloc_delta": 0
+    },
+    {
+      "scope": "overall",
+      "reference": "awaitless",
+      "baseline": "tmux_wrapped",
+      "result_fidelity_delta_percentage_points": 0.0,
+      "median_agent_tool_call_reduction_percent": 0.0,
+      "p90_agent_visible_byte_reduction_percent": -79.03571428571428,
+      "usage_token_reduction_percent": -56.25093914350112,
+      "custom_glue_sloc_delta": -319
+    },
+    {
+      "scope": "recovery",
+      "reference": "awaitless",
+      "baseline": "tmux_plain",
+      "result_fidelity_delta_percentage_points": 0.0,
+      "median_agent_tool_call_reduction_percent": 33.333333333333336,
+      "p90_agent_visible_byte_reduction_percent": -88.8135593220339,
+      "usage_token_reduction_percent": 3.066884176182716,
+      "custom_glue_sloc_delta": 0
+    },
+    {
+      "scope": "recovery",
+      "reference": "awaitless",
+      "baseline": "tmux_wrapped",
+      "result_fidelity_delta_percentage_points": 0.0,
+      "median_agent_tool_call_reduction_percent": 0.0,
+      "p90_agent_visible_byte_reduction_percent": -79.03571428571428,
+      "usage_token_reduction_percent": -56.25093914350112,
+      "custom_glue_sloc_delta": -319
+    }
+  ],
+  "quality": {
+    "expected_arms": [
+      "awaitless",
+      "tmux_plain",
+      "tmux_wrapped"
+    ],
+    "case_count": 20,
+    "incomplete_cases": [],
+    "llm_length_truncations": 0,
+    "warnings": []
+  },
+  "definitions": {
+    "result_fidelity": "state, exit code, log contract, artifact, and cancellation cleanup are all correct when applicable",
+    "agent_visible_bytes": "exact stdout plus stderr bytes returned by agent-visible calls",
+    "usage_tokens": "input_tokens plus output_tokens; reasoning tokens are reported separately and not double-counted",
+    "positive_reduction": "positive percentages mean Awaitless used less than the named baseline"
+  }
+}
