@@ -119,7 +119,8 @@ def parser() -> argparse.ArgumentParser:
     wait_group.add_argument("--json", action="store_true")
 
     wait = commands.add_parser("wait", help="block until a job reaches a terminal state")
-    wait.add_argument("job_id")
+    wait.add_argument("job_id", nargs="?", help="job ID (omit when using --last)")
+    wait.add_argument("--last", action="store_true", help="wait for the most recently detached job")
     wait.add_argument("--timeout")
     wait.add_argument("--progress-interval", help="emit structured heartbeat updates to stderr")
     wait.add_argument("--json", action="store_true")
@@ -144,6 +145,7 @@ def parser() -> argparse.ArgumentParser:
     logs.add_argument("--tail", type=int, default=None)
     logs.add_argument("--max-bytes", type=int, default=None)
     logs.add_argument("--follow", action="store_true")
+    logs.add_argument("--grep", help="regular expression used to filter returned log lines")
     logs.add_argument("--json", action="store_true")
 
     cancel = commands.add_parser("cancel", help="terminate a managed process group")
@@ -487,6 +489,8 @@ def main(argv: list[str] | None = None) -> int:
                     detach_immediately=result["state"] == "queued",
                 )
                 _print(output, json_mode, quiet=args.quiet)
+                if output.get("detached") and not json_mode and not args.quiet:
+                    print(f"awaitless: job still running; continue with: {output['next_command']}", file=sys.stderr)
                 return (
                     0
                     if output["detached"]
@@ -510,6 +514,13 @@ def main(argv: list[str] | None = None) -> int:
             _print(service.recover_last(), True, quiet=args.quiet)
             return 0
         if args.action == "wait":
+            if args.last:
+                if args.job_id:
+                    raise AwaitlessError("a job ID cannot be combined with --last")
+                recent = service.recover_last()
+                args.job_id = recent["job_id"]
+            elif not args.job_id:
+                raise AwaitlessError("a job ID is required unless --last is used")
             progress = parse_duration(args.progress_interval)
             deadline = parse_duration(args.timeout)
             if progress is not None and progress <= 0:
@@ -578,10 +589,29 @@ def main(argv: list[str] | None = None) -> int:
             max_bytes = args.max_bytes if args.max_bytes is not None else settings.max_return_bytes
             if tail < 0 or max_bytes <= 0:
                 raise AwaitlessError("--tail must be non-negative and --max-bytes must be positive")
+            grep = None
+            if args.grep:
+                import re
+                try:
+                    grep = re.compile(args.grep)
+                except re.error as exc:
+                    raise AwaitlessError(f"invalid --grep pattern: {exc}") from exc
+
+            def filtered_logs() -> dict[str, Any]:
+                result = service.logs(args.job_id, tail, max_bytes)
+                if grep:
+                    for stream in ("stdout_tail", "stderr_tail"):
+                        result[stream] = "".join(
+                            line for line in result[stream].splitlines(keepends=True)
+                            if grep.search(line)
+                        )
+                    result["grep"] = args.grep
+                return result
+
             if args.follow:
                 previous = None
                 while True:
-                    result = service.logs(args.job_id, tail, max_bytes)
+                    result = filtered_logs()
                     rendered = result["stdout_tail"] + result["stderr_tail"]
                     if rendered != previous:
                         print(rendered, end="" if rendered.endswith("\n") else "\n")
@@ -589,7 +619,7 @@ def main(argv: list[str] | None = None) -> int:
                     if service.status(args.job_id)["state"] in EXIT_CODES:
                         return 0
                     time.sleep(settings.poll_interval)
-            result = service.logs(args.job_id, tail, max_bytes)
+            result = filtered_logs()
             if json_mode:
                 _print(result, True, quiet=args.quiet)
             elif not args.quiet:

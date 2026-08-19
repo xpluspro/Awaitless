@@ -105,12 +105,44 @@ class CLITest(unittest.TestCase):
         self.assertEqual(value["delivery"], "detached")
         self.assertTrue(value["detached"])
         self.assertEqual(value["detach_reason"], "inline_timeout")
+        self.assertEqual(value["job_state"], value["state"])
+        self.assertEqual(value["wait_state"], "client_timeout")
+        self.assertEqual(value["delivery_state"], "pending")
+        self.assertEqual(
+            value["next_command"], f"awaitless wait {value['job_id']} --json"
+        )
         self.assertIn(value["state"], {"starting", "running", "stalled"})
         final = json.loads(
             self.run_cli("wait", value["job_id"], "--json").stdout
         )
         self.assertEqual(final["state"], "succeeded")
+        self.assertEqual(final["job_state"], "succeeded")
+        self.assertEqual(final["wait_state"], "complete")
+        self.assertEqual(final["delivery_state"], "delivered")
         self.assertEqual(final["stdout_tail"], "started\n")
+
+    def test_wait_last_recovers_most_recent_detached_job(self) -> None:
+        value = json.loads(
+            self.run_cli(
+                "run", "--inline-timeout", "0.01s", "--json", "--",
+                sys.executable, "-c", "import time; time.sleep(.1)",
+            ).stdout
+        )
+        final = json.loads(self.run_cli("wait", "--last", "--json").stdout)
+        self.assertEqual(final["job_id"], value["job_id"])
+        self.assertEqual(final["state"], "succeeded")
+
+    def test_logs_grep_filters_each_stream(self) -> None:
+        job = self.submit(
+            "bash", "-c",
+            "printf 'build ok\\nmedian=1.2\\n'; printf 'warning\\nCV=0.01\\n' >&2",
+        )
+        value = json.loads(
+            self.run_cli("logs", job, "--grep", "median|CV", "--json").stdout
+        )
+        self.assertEqual(value["grep"], "median|CV")
+        self.assertEqual(value["stdout_tail"], "median=1.2\n")
+        self.assertEqual(value["stderr_tail"], "CV=0.01\n")
 
     def test_adaptive_run_uses_operator_default_queue(self) -> None:
         self.run_cli("queue", "create", "gpu0", "--concurrency", "1", "--json")

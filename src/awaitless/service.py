@@ -449,14 +449,18 @@ class Service:
                     result = self.summary(self.require(job_id))
                     result["backend_connected"] = False
                     result["wait_timed_out"] = True
+                    result.update(job_state=result.get("state"), wait_state="client_timeout", delivery_state="pending")
                     return result, True
                 remaining = None if wait_timeout is None else wait_timeout - (time.monotonic() - started)
                 time.sleep(max(0.05, min(self.settings.poll_interval, remaining or self.settings.poll_interval)))
                 continue
             if result["state"] in TERMINAL_STATES:
-                return self._terminal_result(job_id, result), False
+                result = self._terminal_result(job_id, result)
+                result.update(job_state=result.get("state"), wait_state="complete", delivery_state="delivered")
+                return result, False
             if wait_timeout is not None and time.monotonic() - started >= wait_timeout:
                 result["wait_timed_out"] = True
+                result.update(job_state=result.get("state"), wait_state="client_timeout", delivery_state="pending")
                 return result, True
             remaining = None if wait_timeout is None else wait_timeout - (time.monotonic() - started)
             time.sleep(max(0.05, min(self.settings.poll_interval, remaining or self.settings.poll_interval)))
@@ -495,6 +499,13 @@ class Service:
             else None,
             inline_timeout_seconds=inline_timeout_seconds,
         )
+        if detached:
+            result.update(
+                job_state=result.get("state"),
+                wait_state="client_timeout",
+                delivery_state="pending",
+                next_command=f"awaitless wait {job_id} --json",
+            )
         if detached:
             self.record_recent_job(result)
         return result
