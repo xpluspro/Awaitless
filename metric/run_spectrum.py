@@ -17,6 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from .provenance import git_state
+except ImportError:
+    from provenance import git_state  # type: ignore[no-redef]
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "metric" / "configs" / "spectrum-v0.8.json"
@@ -156,8 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"spectrum: {exc}", file=sys.stderr)
         return 2
-    commit = execute(["git", "rev-parse", "HEAD"], cwd=ROOT, timeout=10).stdout.decode().strip()
-    dirty = bool(execute(["git", "status", "--porcelain"], cwd=ROOT, timeout=10).stdout.strip())
+    commit, dirty, untracked = git_state(ROOT)
     config_sha = hashlib.sha256(args.config.read_bytes()).hexdigest()
     rng = random.Random(20260819)
     failed = 0
@@ -181,7 +185,8 @@ def main(argv: list[str] | None = None) -> int:
                     "suite": config["name"], "trial": trial, "command_id": command["id"],
                     "argv": command_argv, "expected_exit_code": command["expected_exit_code"],
                     "observation": observation, "awaitless_install": identity,
-                    "git_commit": commit, "git_dirty": dirty, "config_sha256": config_sha,
+                    "git_commit": commit, "git_dirty": dirty,
+                    "git_untracked_files": untracked, "config_sha256": config_sha,
                     "platform": platform.platform(),
                 })
     print(json.dumps({"records": int(config["trials"]) * len(config["commands"]) * 2, "failed": failed, "awaitless_install": identity}, separators=(",", ":")))

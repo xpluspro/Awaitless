@@ -14,6 +14,11 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .provenance import git_state
+except ImportError:
+    from provenance import git_state  # type: ignore[no-redef]
+
+try:
     from .run_agent import (
         DEFAULT_ENV,
         ModelClient,
@@ -283,10 +288,7 @@ def summarize(
         }
     )
     model_matches = expected_model is None or observed_models == [expected_model]
-    commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-    ).stdout.strip()
+    commit, dirty, untracked = git_state(ROOT)
     return {
         "schema_version": 1,
         "record_type": "tool_selection_summary",
@@ -299,10 +301,8 @@ def summarize(
             "awaitless_version": __version__,
             "awaitless_package_file": str(Path(mcp_module.__file__).resolve()),
             "git_commit": commit,
-            "git_dirty": bool(subprocess.run(
-                ["git", "status", "--porcelain"], cwd=ROOT, text=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-            ).stdout.strip()),
+            "git_dirty": dirty,
+            "git_untracked_files": untracked,
             "config_sha256": hashlib.sha256(
                 json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest(),

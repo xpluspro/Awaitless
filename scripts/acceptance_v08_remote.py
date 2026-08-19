@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from metric.provenance import git_state
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_VERSION = "0.8.0"
@@ -129,18 +131,13 @@ def main(argv: list[str] | None = None) -> int:
     if f'__version__ = "{args.expected_version}"' not in version_file.read_text(encoding="utf-8"):
         print(f"acceptance: source is not Awaitless {args.expected_version}", file=sys.stderr)
         return 2
-    commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-    ).stdout.strip()
+    commit, dirty, untracked = git_state(ROOT)
     provenance = {
         "awaitless_version": args.expected_version,
         "awaitless_source": str((ROOT / "src" / "awaitless").resolve()),
         "git_commit": commit,
-        "git_dirty": bool(subprocess.run(
-            ["git", "status", "--porcelain"], cwd=ROOT, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        ).stdout.strip()),
+        "git_dirty": dirty,
+        "git_untracked_files": untracked,
         "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
     nonce = uuid.uuid4().hex[:12]

@@ -23,6 +23,11 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .provenance import git_state
+except ImportError:
+    from provenance import git_state  # type: ignore[no-redef]
+
+try:
     from . import long_workload, run_local
 except ImportError:
     import long_workload  # type: ignore[no-redef]
@@ -713,8 +718,7 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 def base_environment(config_path: Path, config: dict[str, Any]) -> dict[str, Any]:
-    commit = execute(["git", "rev-parse", "HEAD"], timeout=5).stdout.decode().strip()
-    dirty = bool(execute(["git", "status", "--porcelain"], timeout=5).stdout.strip())
+    commit, dirty, untracked = git_state(ROOT)
     effective = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
     version_text = (ROOT / "src" / "awaitless" / "__init__.py").read_text(encoding="utf-8")
     version_match = re.search(r'__version__\s*=\s*"([^"]+)"', version_text)
@@ -725,6 +729,7 @@ def base_environment(config_path: Path, config: dict[str, Any]) -> dict[str, Any
         "effective_config_sha256": hashlib.sha256(effective).hexdigest(),
         "git_commit": commit,
         "git_dirty": dirty,
+        "git_untracked_files": untracked,
         "platform": platform.platform(),
         "python_version": platform.python_version(),
         "awaitless_version": version_match.group(1) if version_match else "unknown",

@@ -23,6 +23,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from .provenance import git_state
+except ImportError:
+    from provenance import git_state  # type: ignore[no-redef]
+
 
 ROOT = Path(__file__).resolve().parents[1]
 METRIC_ROOT = Path(__file__).resolve().parent
@@ -858,8 +863,7 @@ def base_environment(config_path: Path, config: dict[str, Any]) -> dict[str, Any
         if shutil.which("tmux")
         else None
     )
-    commit = execute(["git", "rev-parse", "HEAD"], timeout=5).stdout.decode().strip()
-    git_status = execute(["git", "status", "--porcelain"], timeout=5)
+    commit, dirty, untracked = git_state(ROOT)
     version = source_version()
     effective_config = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
     return {
@@ -869,7 +873,8 @@ def base_environment(config_path: Path, config: dict[str, Any]) -> dict[str, Any
         "effective_config_sha256": hashlib.sha256(effective_config).hexdigest(),
         "configured_trials": int(config["trials"]),
         "git_commit": commit,
-        "git_dirty": bool(git_status.stdout.strip()),
+        "git_dirty": dirty,
+        "git_untracked_files": untracked,
         "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "workload_sha256": hashlib.sha256(WORKLOAD.read_bytes()).hexdigest(),
         "tmux_wrapper_sha256": hashlib.sha256(TMUX_WRAPPER.read_bytes()).hexdigest(),
