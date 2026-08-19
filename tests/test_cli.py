@@ -870,10 +870,11 @@ with open(lock_path, 'a') as lock:
         self.assertEqual(value["parsed_results"], {"ok": True})
         self.assertGreater(value["duration_seconds"], 0)
         self.assertGreater(value["stdout_bytes"], 0)
+        snapshot_sha = value["snapshot"]["sha256"]
         remote_job = remote_home / ".awaitless" / "jobs" / job
         self.assertTrue((remote_job / "pid_start_ticks").read_text().strip().isdigit())
         self.assertTrue((remote_job / "heartbeat").is_file())
-        # Result delivery is independently retryable after the terminal event.
+        # v0.7 replays the captured terminal result without reconnecting.
         fail_once.touch()
         completion = json.loads(
             self.run_cli(
@@ -882,20 +883,13 @@ with open(lock_path, 'a') as lock:
                 "--timeout",
                 "0",
                 "--json",
-                expected=4,
             ).stdout
         )
-        self.assertEqual(completion["completions"], [])
-        self.assertEqual(completion["unreachable_job_ids"], [job])
-        self.assertTrue(completion["has_more"])
-        completion = json.loads(
-            self.run_cli(
-                "completions", job, "--timeout", "2s", "--json"
-            ).stdout
-        )["completions"]
+        completion = completion["completions"]
         self.assertEqual(len(completion), 1)
         self.assertEqual(completion[0]["state"], "succeeded")
         self.assertEqual(completion[0]["result"]["parsed_results"], {"ok": True})
+        self.assertEqual(completion[0]["result"]["snapshot"]["sha256"], snapshot_sha)
 
     def test_ssh_cancel_records_durable_marker(self) -> None:
         remote_home = self.configure_fake_ssh()
