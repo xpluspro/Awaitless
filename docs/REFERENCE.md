@@ -107,6 +107,7 @@ Commands:
 | `queue list` | List queues and their queued, active, and total job counts. |
 | `inspect` | Return job metadata and state history. |
 | `doctor` | Check local and configured SSH prerequisites. |
+| `submit-group` / `wait-group` | Submit one durable job per device and return a device/result summary. |
 | `demo` | Kill a completion waiter, then recover two Job results from new clients. |
 
 Common operations:
@@ -132,6 +133,7 @@ Important `run` and `submit` options:
 --host NAME
 --cwd PATH
 --env NAME=VALUE
+--device ID
 --timeout DURATION
 --stall-timeout DURATION
 --inline-timeout DURATION  # run only
@@ -448,6 +450,10 @@ modification time. A declared JSON file within the return budget is parsed into
 }
 ```
 
+Artifact declarations may use glob patterns such as `artifacts/*.json` and
+`logs/**`; each matching file is returned separately. Failed results also carry
+`stage`, `reason`, `retryable`, and `suggestion` alongside the bounded log tails.
+
 Relative local Artifacts are resolved from the submission working directory,
 even if a later client runs elsewhere. `--log-dir /path/to/logs` creates an
 isolated `/path/to/logs/<job-id>/` directory for each job.
@@ -485,6 +491,10 @@ Start with:
 ```bash
 awaitless doctor --json
 awaitless inspect <job-id> --json
+awaitless doctor --host zhiyuan --cwd /workspace/project --devices 4,5,6,7 --json
+awaitless submit-group --group tuning --host zhiyuan --devices 4,5,6,7 --artifact 'artifacts/*.json' -- ./run_benchmark.sh
+awaitless wait-group tuning --json
+awaitless completions --group tuning --json
 awaitless logs <job-id> --tail 200 --json
 ```
 

@@ -512,45 +512,27 @@ done
         assert job["host"]
         if not job["artifact_paths"]:
             return []
-        snippets: list[str] = []
-        for index, declared in enumerate(job["artifact_paths"]):
-            if declared.startswith("/"):
-                path_expr = shlex.quote(declared)
-            elif job.get("cwd"):
-                path_expr = shlex.quote(str(job["cwd"]).rstrip("/") + "/" + declared)
-            else:
-                path_expr = '"$HOME"/' + shlex.quote(declared)
-            snippets.append(f"""
-path={path_expr}
-echo 'ARTIFACT_{index}_BEGIN=1'
-if [ -f "$path" ]; then
-  echo 'EXISTS=1'
-  echo "SIZE=$(stat -c %s "$path")"
-  echo "MTIME=$(stat -c %Y "$path")"
-  case "$path" in *.json) [ "$(stat -c %s "$path")" -le {int(max_bytes)} ] && echo "CONTENT=$(base64 < "$path" | tr -d '\\n')" ;; esac
-else
-  echo 'EXISTS=0'
-fi
-echo 'ARTIFACT_{index}_END=1'
-""")
-        output = self._invoke(job["host"], "set -u\n" + "\n".join(snippets))
-        items: list[dict[str, Any]] = []
-        lines = output.splitlines()
-        for index, declared in enumerate(job["artifact_paths"]):
-            begin = lines.index(f"ARTIFACT_{index}_BEGIN=1")
-            end = lines.index(f"ARTIFACT_{index}_END=1")
-            values = dict(line.split("=", 1) for line in lines[begin + 1:end] if "=" in line)
-            item: dict[str, Any] = {"path": declared, "remote": True, "exists": values.get("EXISTS") == "1"}
-            if item["exists"]:
-                item["size_bytes"] = int(values.get("SIZE", "0"))
-                if values.get("MTIME", "").isdigit():
-                    item["modified_at"] = datetime.fromtimestamp(
-                        int(values["MTIME"]), timezone.utc
-                    ).isoformat().replace("+00:00", "Z")
-                if "CONTENT" in values:
-                    try:
-                        item["content"] = json.loads(base64.b64decode(values["CONTENT"]))
-                    except (ValueError, json.JSONDecodeError) as exc:
-                        item["parse_error"] = str(exc)
-            items.append(item)
-        return items
+        payload = base64.b64encode(json.dumps({"patterns": job["artifact_paths"], "cwd": job.get("cwd"), "max_bytes": max_bytes}).encode()).decode()
+        source = r'''import base64, datetime, glob, json, os, pathlib
+spec=json.loads(base64.b64decode(os.environ["AWAITLESS_ARTIFACT_SPEC"]))
+items=[]
+for declared in spec["patterns"]:
+    pattern=declared if os.path.isabs(declared) else os.path.join(spec["cwd"] or os.path.expanduser("~"), declared)
+    matches=[p for p in glob.glob(os.path.expanduser(pattern), recursive=True) if os.path.isfile(p)]
+    if not matches:
+        items.append({"path":declared,"remote":True,"exists":False})
+    for matched in sorted(matches):
+        stat=os.stat(matched)
+        item={"path":matched,"declared_path":declared,"remote":True,"exists":True,"size_bytes":stat.st_size,"modified_at":datetime.datetime.fromtimestamp(stat.st_mtime,datetime.timezone.utc).isoformat().replace("+00:00","Z")}
+        if pathlib.Path(matched).suffix.lower()==".json" and stat.st_size<=spec["max_bytes"]:
+            try:
+                with open(matched,encoding="utf-8") as handle: item["content"]=json.load(handle)
+            except Exception as exc: item["parse_error"]=str(exc)
+        items.append(item)
+print(base64.b64encode(json.dumps(items).encode()).decode())'''
+        script = f"export AWAITLESS_ARTIFACT_SPEC={shlex.quote(payload)}\npython3 - <<'PY'\n{source}\nPY\n"
+        output = self._invoke(job["host"], script)
+        try:
+            return json.loads(base64.b64decode(output.strip()))
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise SSHError(f"invalid artifact response from {job['host']!r}: {exc}") from exc

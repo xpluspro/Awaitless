@@ -159,6 +159,57 @@ class CLITest(unittest.TestCase):
         self.assertEqual((value["state"], value["exit_code"]), ("failed", 7))
         self.assertEqual(value["stderr_tail"], "error\n")
 
+    def test_exit_21_has_structured_device_diagnostic(self) -> None:
+        job = self.submit("bash", "-c", "echo 'npu-smi is unavailable' >&2; exit 21")
+        value = json.loads(self.run_cli("wait", job, "--json", expected=3).stdout)
+        self.assertEqual(value["stage"], "device_unavailable")
+        self.assertEqual(value["reason"], "device_unavailable")
+        self.assertTrue(value["retryable"])
+
+    def test_device_sets_ascend_environment_and_exclusive_queue(self) -> None:
+        value = json.loads(
+            self.run_cli(
+                "run", "--device", "4", "--inline-timeout", "2s", "--json", "--",
+                sys.executable, "-c",
+                "import os; print(os.environ['ASCEND_DEVICE_ID'], os.environ['ASCEND_RT_VISIBLE_DEVICES'])",
+            ).stdout
+        )
+        self.assertEqual(value["queue"], "device-4")
+        final = json.loads(self.run_cli("wait", value["job_id"], "--json").stdout)
+        self.assertEqual(final["stdout_tail"], "4 4\n")
+
+    def test_submit_and_wait_group_aggregate_devices(self) -> None:
+        submitted = json.loads(
+            self.run_cli(
+                "submit-group", "--group", "trial", "--devices", "4,5", "--json", "--",
+                sys.executable, "-c", "import os; print(os.environ['ASCEND_DEVICE_ID'])",
+            ).stdout
+        )
+        self.assertEqual(len(submitted["job_ids"]), 2)
+        feed = json.loads(self.run_cli("completions", "--group", "trial", "--json").stdout)
+        self.assertGreaterEqual(len(feed["completions"]), 1)
+        result = json.loads(self.run_cli("wait-group", "trial", "--json").stdout)
+        self.assertEqual([row["device"] for row in result["rows"]], ["4", "5"])
+        self.assertTrue(all(row["state"] == "succeeded" for row in result["rows"]))
+
+    def test_artifact_glob_collects_each_match(self) -> None:
+        work = Path(self.temp.name) / "glob-work"
+        work.mkdir()
+        job = self.submit(
+            "bash", "-c", "mkdir -p artifacts; echo '{\"n\":1}' > artifacts/a.json; echo '{\"n\":2}' > artifacts/b.json",
+            options=("--cwd", str(work), "--artifact", "artifacts/*.json"),
+        )
+        value = json.loads(self.run_cli("wait", job, "--json").stdout)
+        self.assertEqual(sorted(item["content"]["n"] for item in value["artifacts"]), [1, 2])
+
+    def test_remote_doctor_reports_missing_cwd(self) -> None:
+        self.configure_fake_ssh()
+        value = json.loads(
+            self.run_cli("doctor", "--host", "fake", "--cwd", "/definitely/missing", "--json", expected=1).stdout
+        )
+        self.assertFalse(value["ok"])
+        self.assertEqual(value["stage"], "preflight_failed")
+
     def test_runtime_timeout_terminates_job(self) -> None:
         job = self.submit("bash", "-c", "sleep 10", options=("--timeout", "0.1s"))
         value = json.loads(self.run_cli("wait", job, "--json", expected=4).stdout)

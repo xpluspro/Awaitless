@@ -5,6 +5,8 @@ import json
 import os
 import re
 import time
+import glob
+import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,12 @@ class JobNotFound(AwaitlessError):
     pass
 
 
+class PreflightError(AwaitlessError):
+    def __init__(self, result: dict[str, Any]):
+        super().__init__(str(result.get("reason") or "preflight failed"))
+        self.result = result
+
+
 class Service:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -47,6 +55,47 @@ class Service:
 
     def close(self) -> None:
         self.store.close()
+
+    def submit_group(self, *, group_id: str, devices: list[str], **kwargs: Any) -> dict[str, Any]:
+        if not QUEUE_NAME.fullmatch(group_id):
+            raise AwaitlessError("group ID must use letters, digits, dot, underscore, or hyphen")
+        if not devices:
+            raise AwaitlessError("at least one device is required for a group")
+        jobs = []
+        for device in devices:
+            from .util import new_job_id
+            jobs.append(self.submit(job_id=new_job_id(), device=device, **kwargs))
+        payload = {"group_id": group_id, "created_at": utc_now(), "job_ids": [item["job_id"] for item in jobs], "devices": devices}
+        atomic_json(self.settings.data_dir / "groups" / f"{group_id}.json", payload)
+        return {**payload, "jobs": jobs}
+
+    def group(self, group_id: str) -> dict[str, Any]:
+        path = self.settings.data_dir / "groups" / f"{group_id}.json"
+        if not path.is_file():
+            raise AwaitlessError(f"unknown experiment group: {group_id}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def wait_group(self, group_id: str, wait_timeout: float | None = None) -> dict[str, Any]:
+        group = self.group(group_id)
+        started = time.monotonic()
+        cursor = None
+        completions: list[dict[str, Any]] = []
+        active = list(group["job_ids"])
+        while active:
+            remaining = None if wait_timeout is None else max(0.0, wait_timeout - (time.monotonic() - started))
+            batch = self.completions(active, after_cursor=cursor, wait_timeout=remaining, limit=500)
+            completions.extend(batch["completions"])
+            cursor = batch["next_cursor"]
+            active = batch["active_job_ids"]
+            if batch["wait_timed_out"]:
+                break
+        by_job = {item["job_id"]: item for item in completions}
+        rows = []
+        for job_id, device in zip(group["job_ids"], group["devices"]):
+            item = by_job.get(job_id)
+            result = (item or {}).get("result", {})
+            rows.append({"job_id": job_id, "device": device, "state": (item or {}).get("state", result.get("state", "active")), "exit_code": result.get("exit_code"), "duration_seconds": result.get("duration_seconds"), "stage": result.get("stage"), "reason": result.get("reason"), "last_log": (result.get("stderr_tail") or result.get("stdout_tail", ""))[-1000:]})
+        return {"group_id": group_id, "rows": rows, "completions": completions, "next_cursor": cursor, "active_job_ids": active, "wait_timed_out": bool(active)}
 
     def submit(
         self,
@@ -66,6 +115,7 @@ class Service:
         client_request_id: str | None = None,
         mcp_task_ttl_ms: int | None = None,
         queue_name: str | None = None,
+        device: str | None = None,
     ) -> dict[str, Any]:
         if not command:
             raise AwaitlessError("a command is required after --")
@@ -75,6 +125,22 @@ class Service:
             raise AwaitlessError(f"{backend.upper()} backend requires --host")
         if backend == "local" and host:
             raise AwaitlessError("--host can only be used with an SSH-based backend")
+        if device is not None:
+            if not str(device).isdigit():
+                raise AwaitlessError("device must be a numeric device ID")
+            device = str(device)
+            env = dict(env)
+            env.setdefault("ASCEND_RT_VISIBLE_DEVICES", device)
+            env.setdefault("ASCEND_DEVICE_ID", device)
+            if queue_name is None:
+                queue_name = f"device-{device}"
+                if host:
+                    safe_host = re.sub(r"[^A-Za-z0-9._-]+", "-", host).strip("-")
+                    queue_name = f"{safe_host}-{queue_name}"[:64]
+                try:
+                    self.store.create_queue(queue_name, 1)
+                except ValueError as exc:
+                    raise AwaitlessError(str(exc)) from exc
         queue: dict[str, Any] | None = None
         if queue_name is not None:
             if not QUEUE_NAME.fullmatch(queue_name):
@@ -194,6 +260,7 @@ class Service:
                 log_dir=str(log_root) if log_root else None,
                 backend_options=backend_options or {},
                 queue_name=queue_name,
+                device=device,
                 mcp_task=mcp_task_ttl_ms is not None,
             )
             try:
@@ -248,6 +315,48 @@ class Service:
             result["exit_code"] = None
             result["finished_at"] = None
         return result
+
+    def doctor_remote(
+        self, host: str, *, cwd: str | None = None, devices: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Run a bounded, machine-readable prerequisite check on an SSH target."""
+        backend = self.backends["ssh"]
+        checks: list[dict[str, Any]] = []
+        checks.append({"name": "cwd", "ok": True, "required": False})
+        script = "set +e\n"
+        script += "printf 'PATH=%s\\n' \"$PATH\"\n"
+        for name, command in (("bash", "bash"), ("cmake", "cmake"), ("npu_smi", "npu-smi"), ("python", "python3")):
+            script += f"command -v {command} >/dev/null 2>&1; echo CHECK_{name}=$?\n"
+        if cwd:
+            script += f"test -d {shlex.quote(cwd)}; echo CHECK_cwd=$?\n"
+            script += f"test -r {shlex.quote(cwd)} -a -x {shlex.quote(cwd)}; echo CHECK_permissions=$?\n"
+            script += f"df -Pk {shlex.quote(cwd)} 2>/dev/null | awk 'NR==2 {{print \"DISK_KB=\" $4}}'\n"
+        script += "if [ -n \"${ASCEND_HOME_PATH:-}\" ] || [ -d /usr/local/Ascend ]; then echo CHECK_cann=0; else echo CHECK_cann=1; fi\n"
+        if devices:
+            script += "npu_tmp=/tmp/awaitless-npu-smi.$$; if command -v npu-smi >/dev/null 2>&1; then npu-smi info >\"$npu_tmp\" 2>&1; echo NPU_RC=$?; else : >\"$npu_tmp\"; echo NPU_RC=127; fi\n"
+            for device in devices:
+                if not device.isdigit():
+                    raise AwaitlessError("devices must be comma-separated numeric IDs")
+                script += f"grep -Eq '(^|[^0-9]){device}([^0-9]|$)' \"$npu_tmp\"; echo CHECK_device_{device}=$?\n"
+            script += "rm -f \"$npu_tmp\"\n"
+        try:
+            output = backend._invoke(host, script, timeout=15)  # type: ignore[attr-defined]
+        except SSHError as exc:
+            return {"ok": False, "host": host, "stage": "connection", "reason": "ssh_unreachable", "suggestion": "Check SSH credentials, hostname and network.", "error": str(exc), "checks": checks}
+        values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        for name in ("bash", "cmake", "npu_smi", "python"):
+            value = values.get(f"CHECK_{name}")
+            required = name in {"bash", "cmake", "python"} or bool(devices) and name == "npu_smi"
+            checks.append({"name": "npu-smi" if name == "npu_smi" else name, "ok": value == "0" or not required, "required": required})
+        checks.append({"name": "CANN", "ok": values.get("CHECK_cann") == "0", "required": bool(devices)})
+        if cwd and "CHECK_cwd" in values:
+            checks.append({"name": "cwd_exists", "ok": values["CHECK_cwd"] == "0", "required": True})
+            checks.append({"name": "cwd_permissions", "ok": values.get("CHECK_permissions") == "0", "required": True})
+        for device in devices or []:
+            checks.append({"name": f"device_{device}_visible", "ok": values.get(f"CHECK_device_{device}") == "0", "required": True})
+        ok = all(item["ok"] for item in checks if item.get("required", True))
+        failed = next((item["name"] for item in checks if not item["ok"]), None)
+        return {"ok": ok, "host": host, "stage": None if ok else "preflight_failed", "reason": None if ok else f"missing_or_invalid_{failed}", "suggestion": None if ok else "Install the missing tool or select a compatible cwd/device.", "checks": checks, "path": values.get("PATH"), "disk_available_kb": int(values["DISK_KB"]) if values.get("DISK_KB", "").isdigit() else None}
 
     def require(self, job_id: str) -> dict[str, Any]:
         job = self.store.get(job_id)
@@ -466,7 +575,33 @@ class Service:
         ]
         if len(parsed) == 1:
             result["parsed_results"] = parsed[0]
+        self._diagnose_result(result)
         return result
+
+    @staticmethod
+    def _diagnose_result(result: dict[str, Any]) -> None:
+        if result.get("state") == "succeeded":
+            result.setdefault("stage", "completed")
+            return
+        stderr = (result.get("stderr_tail") or "").lower()
+        error = (result.get("error") or "").lower()
+        text = f"{stderr}\n{error}"
+        if result.get("exit_code") == 21 or "npu-smi" in text or "device" in text and ("unavailable" in text or "busy" in text):
+            stage, reason, retryable = "device_unavailable", "device_unavailable", True
+            suggestion = "Wait for the device or submit with another --device; check ASCEND_RT_VISIBLE_DEVICES."
+        elif any(marker in text for marker in ("cmake error", "ninja: build stopped", "make: ***")):
+            stage, reason, retryable = "build_failed", "build_failed", False
+            suggestion = "Inspect the build error above and verify CMake and compiler paths."
+        elif "working directory" in text or "no such file" in text:
+            stage, reason, retryable = "preflight_failed", "cwd_unavailable", False
+            suggestion = "Verify --cwd exists on the remote host."
+        elif result.get("state") == "timed_out":
+            stage, reason, retryable = "timed_out", "timeout", True
+            suggestion = "Increase --timeout or inspect the bounded logs."
+        else:
+            stage, reason, retryable = "command_failed", "command_failed", False
+            suggestion = "Inspect stderr_tail and verify the remote toolchain and environment."
+        result.update(stage=stage, reason=reason, retryable=retryable, suggestion=suggestion)
 
     def cancel(self, job_id: str, grace_seconds: float) -> dict[str, Any]:
         job = self.require(job_id)
@@ -572,10 +707,21 @@ class Service:
             return self.backends[job["backend"]].artifacts(job, self.settings.max_return_bytes)  # type: ignore[attr-defined]
         cwd = Path(job["cwd"] or ".")
         items: list[dict[str, Any]] = []
+        declarations: list[tuple[str, Path, str | None]] = []
         for declared in job["artifact_paths"]:
-            path = Path(declared)
-            resolved = path if path.is_absolute() else cwd / path
+            if any(ch in declared for ch in "*?["):
+                matches = glob.glob(str(cwd / declared), recursive=True)
+                if matches:
+                    declarations.extend((match, Path(match), declared) for match in matches)
+                else:
+                    declarations.append((declared, cwd / declared, None))
+            else:
+                path = Path(declared)
+                declarations.append((declared, path if path.is_absolute() else cwd / path, None))
+        for declared, resolved, pattern in declarations:
             item: dict[str, Any] = {"path": declared, "exists": resolved.is_file()}
+            if pattern:
+                item["declared_path"] = pattern
             if resolved.is_file():
                 stat = resolved.stat()
                 item.update(size_bytes=stat.st_size, modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"))

@@ -15,7 +15,7 @@ from . import __version__
 from .backends.ssh import SSHError
 from .config import adaptive_queue, load_settings
 from .constants import EXIT_CODES
-from .service import AwaitlessError, Service
+from .service import AwaitlessError, PreflightError, Service
 from .util import new_job_id, parse_duration
 
 
@@ -37,6 +37,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--host")
     run.add_argument("--cwd")
     run.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    run.add_argument("--device", help="Ascend device ID; enables device visibility and exclusive scheduling")
     run.add_argument("--timeout")
     run.add_argument("--stall-timeout")
     run.add_argument("--inline-timeout")
@@ -64,6 +65,7 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--host")
     submit.add_argument("--cwd")
     submit.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    submit.add_argument("--device", help="Ascend device ID; enables device visibility and exclusive scheduling")
     submit.add_argument("--timeout")
     submit.add_argument("--stall-timeout")
     submit.add_argument("--log-dir")
@@ -85,6 +87,26 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--json", action="store_true")
     submit.add_argument("command", nargs=argparse.REMAINDER)
 
+    submit_group = commands.add_parser("submit-group", help="submit one job per device as an experiment group")
+    submit_group.add_argument("--backend", choices=["local", "ssh", "slurm"])
+    submit_group.add_argument("--host")
+    submit_group.add_argument("--cwd")
+    submit_group.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    submit_group.add_argument("--devices", required=True, help="comma-separated device IDs")
+    submit_group.add_argument("--timeout")
+    submit_group.add_argument("--stall-timeout")
+    submit_group.add_argument("--artifact", action="append", default=[])
+    submit_group.add_argument("--name")
+    submit_group.add_argument("--group", dest="group_id", default=None)
+    submit_group.add_argument("--queue")
+    submit_group.add_argument("--json", action="store_true")
+    submit_group.add_argument("command", nargs=argparse.REMAINDER)
+
+    wait_group = commands.add_parser("wait-group", help="wait for all jobs in an experiment group")
+    wait_group.add_argument("group_id")
+    wait_group.add_argument("--timeout")
+    wait_group.add_argument("--json", action="store_true")
+
     wait = commands.add_parser("wait", help="block until a job reaches a terminal state")
     wait.add_argument("job_id")
     wait.add_argument("--timeout")
@@ -93,7 +115,8 @@ def parser() -> argparse.ArgumentParser:
     completions = commands.add_parser(
         "completions", help="wait for durable completions across multiple jobs"
     )
-    completions.add_argument("job_ids", nargs="+")
+    completions.add_argument("job_ids", nargs="*")
+    completions.add_argument("--group", dest="group_id")
     completions.add_argument("--after", dest="after_cursor")
     completions.add_argument("--timeout")
     completions.add_argument("--limit", type=int, default=50)
@@ -135,6 +158,9 @@ def parser() -> argparse.ArgumentParser:
     inspect.add_argument("--json", action="store_true")
 
     doctor = commands.add_parser("doctor", help="check local and SSH prerequisites")
+    doctor.add_argument("--host")
+    doctor.add_argument("--cwd")
+    doctor.add_argument("--devices", help="comma-separated device IDs")
     doctor.add_argument("--json", action="store_true")
 
     demo = commands.add_parser(
@@ -368,6 +394,29 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings(args.config)
     service = Service(settings)
     try:
+        if args.action == "submit-group":
+            command = args.command[1:] if args.command[:1] == ["--"] else args.command
+            host = args.host or settings.default_host
+            backend = args.backend or (str(settings.hosts.get(host, {}).get("backend", "ssh")) if host else settings.default_backend)
+            group_id = args.group_id or new_job_id().lower()
+            devices = [item.strip() for item in args.devices.split(",") if item.strip()]
+            if backend == "ssh":
+                preflight = service.doctor_remote(host, cwd=args.cwd, devices=devices)  # type: ignore[arg-type]
+                if not preflight["ok"]:
+                    raise PreflightError(preflight)
+            result = service.submit_group(
+                group_id=group_id,
+                devices=devices,
+                command=command, backend=backend, host=host, cwd=args.cwd, env=_env(args.env),
+                timeout_seconds=parse_duration(args.timeout), stall_timeout_seconds=parse_duration(args.stall_timeout),
+                name=args.name, artifacts=args.artifact, queue_name=args.queue,
+            )
+            _print(result, json_mode, quiet=args.quiet)
+            return 0
+        if args.action == "wait-group":
+            result = service.wait_group(args.group_id, parse_duration(args.timeout))
+            _print(result, json_mode, quiet=args.quiet)
+            return 4 if result["wait_timed_out"] else 0
         if args.action in {"run", "submit"}:
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
             host = args.host or (
@@ -378,6 +427,10 @@ def main(argv: list[str] | None = None) -> int:
                 if host
                 else settings.default_backend
             )
+            if backend == "ssh" and args.device:
+                preflight = service.doctor_remote(host, cwd=args.cwd, devices=[args.device])  # type: ignore[arg-type]
+                if not preflight["ok"]:
+                    raise PreflightError(preflight)
             queue = args.queue
             if args.action == "run":
                 queue = adaptive_queue(
@@ -394,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
                 backend_options=_slurm_options(args.slurm_option),
                 client_request_id=args.client_request_id,
                 queue_name=queue,
+                device=args.device,
             )
             if args.action == "run":
                 inline_timeout = parse_duration(args.inline_timeout)
@@ -429,8 +483,13 @@ def main(argv: list[str] | None = None) -> int:
             _print(result, json_mode, quiet=args.quiet)
             return 4 if wait_timed_out else EXIT_CODES.get(result["state"], 1)
         if args.action == "completions":
+            job_ids = args.job_ids
+            if args.group_id:
+                if job_ids:
+                    raise AwaitlessError("job IDs and --group cannot be combined")
+                job_ids = service.group(args.group_id)["job_ids"]
             result = service.completions(
-                args.job_ids,
+                job_ids,
                 after_cursor=args.after_cursor,
                 wait_timeout=parse_duration(args.timeout),
                 limit=args.limit,
@@ -508,6 +567,11 @@ def main(argv: list[str] | None = None) -> int:
             _print(service.inspect(args.job_id), True if json_mode else True, quiet=args.quiet)
             return 0
         if args.action == "doctor":
+            if args.host:
+                devices = [item.strip() for item in (args.devices or "").split(",") if item.strip()]
+                result = service.doctor_remote(args.host, cwd=args.cwd, devices=devices or None)
+                _print(result, json_mode, quiet=args.quiet)
+                return 0 if result["ok"] else 1
             configured_backends = {
                 str(value.get("backend", "ssh"))
                 for value in settings.hosts.values()
@@ -549,6 +613,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"cursor={result['next_cursor']}"
                 )
             return 0
+        return 2
+    except PreflightError as exc:
+        if json_mode:
+            print(json.dumps(exc.result, ensure_ascii=False, separators=(",", ":")), file=sys.stderr)
+        else:
+            _error(f"preflight failed: {exc}", False)
         return 2
     except SSHError as exc:
         _error(str(exc), json_mode)

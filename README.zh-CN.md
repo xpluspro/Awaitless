@@ -150,6 +150,19 @@ awaitless doctor --json
 
 也可以使用 `pip install awaitless-runner`。
 
+远程 NPU 调优可以先做完整预检，再按设备提交实验组：
+
+```bash
+awaitless doctor --host zhiyuan --cwd /workspace/project --devices 4,5,6,7 --json
+awaitless submit-group --group tuning --host zhiyuan --devices 4,5,6,7 \
+  --artifact 'artifacts/*.json' -- ./run_benchmark.sh
+awaitless wait-group tuning --json
+```
+
+`--device` 会自动设置 `ASCEND_RT_VISIBLE_DEVICES` 和 `ASCEND_DEVICE_ID`，并用
+每设备并发度为 1 的远程 FIFO 队列避免重复占用。失败结果包含阶段、原因、是否可重试、
+建议动作和有限日志尾部。
+
 ## 交给你的 Coding Agent
 
 在客户端配置中增加一个 stdio MCP server（按客户端格式调整最外层字段）：
