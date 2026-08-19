@@ -277,7 +277,7 @@ chmod 700 "$job_dir/command.sh"
 {queue_setup}
 setsid nohup bash "$job_dir/command.sh" </dev/null >/dev/null 2>&1 9>&- &
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && {ready_started_check}[ -f "$job_dir/heartbeat" ]; then
+  if [ -s "$job_dir/pid" ] && [ -s "$job_dir/pid_start_ticks" ] && [ -s "$job_dir/pgid" ] && {ready_started_check}:; then
     echo "PID=$(cat "$job_dir/pid")"
     echo "PID_START_TICKS=$(cat "$job_dir/pid_start_ticks")"
     echo "PGID=$(cat "$job_dir/pgid")"
