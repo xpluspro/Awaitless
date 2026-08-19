@@ -1,0 +1,383 @@
+{
+  "schema_version": 1,
+  "acceptance": "awaitless-v0.8-protocol-remote",
+  "status": "passed",
+  "provenance": {
+    "awaitless_version": "0.8.0",
+    "awaitless_source": "/Users/xplus/Code/mcp/Awaitless/src/awaitless",
+    "git_commit": "24cc7e8fb92d50950f1ad85e0fc0ba9f45d90294",
+    "git_dirty": false,
+    "git_untracked_files": [
+      "uv.lock"
+    ],
+    "runner_sha256": "a62a010b94aa02c048b9d12d76a8c96cca1ad60a08a7926aefcdd4d427a75183"
+  },
+  "started_at": "2026-08-19T15:03:20.440518Z",
+  "finished_at": "2026-08-19T15:03:44.082282Z",
+  "target": {
+    "host": "zhiyuan",
+    "cwd": "/home/xflops/jhxu/ragged_softmax_moments",
+    "sources": [
+      "/home/xflops/jhxu/ragged_softmax_moments/.local/Ascend/cann-8.5.0/set_env.sh"
+    ],
+    "user_group": "HwHiAiUser",
+    "devices": [
+      "0"
+    ]
+  },
+  "doctor": {
+    "ok": true,
+    "host": "zhiyuan",
+    "cwd": "/home/xflops/jhxu/ragged_softmax_moments",
+    "stage": null,
+    "reason": null,
+    "suggestion": null,
+    "checks": [
+      {
+        "name": "cwd",
+        "ok": true,
+        "required": false
+      },
+      {
+        "name": "source:/home/xflops/jhxu/ragged_softmax_moments/.local/Ascend/cann-8.5.0/set_env.sh",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "bash",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "cmake",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "npu-smi",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "python",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "CANN",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "flock",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "sg",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "group:HwHiAiUser",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "cwd_exists",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "cwd_permissions",
+        "ok": true,
+        "required": true
+      },
+      {
+        "name": "device_0_visible",
+        "ok": true,
+        "required": true
+      }
+    ],
+    "execution_profile": {
+      "sources": [
+        "/home/xflops/jhxu/ragged_softmax_moments/.local/Ascend/cann-8.5.0/set_env.sh"
+      ],
+      "user_group": "HwHiAiUser",
+      "env_names": [
+        "PATH"
+      ]
+    },
+    "path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin:/home/xflops/jhxu/ragged_softmax_moments/.local/Ascend/cann-8.5.0/bin:/home/xflops/jhxu/ragged_softmax_moments/.local/Ascend/cann-8.5.0/tools/ccec_compiler/bin:/usr/local/bin:/usr/bin",
+    "disk_available_kb": 96955360
+  },
+  "queue": {
+    "name": "accept-v08-ec90ae63daa3",
+    "created": {
+      "name": "accept-v08-ec90ae63daa3",
+      "concurrency": 1,
+      "created_at": "2026-08-19T15:03:21.949362Z",
+      "updated_at": "2026-08-19T15:03:21.949362Z",
+      "queued_jobs": 0,
+      "active_jobs": 0,
+      "total_jobs": 0,
+      "created": true
+    },
+    "queued_snapshot": {
+      "job_id": "job_01A01A8C60DEAAA3ECAD82",
+      "client_request_id": "accept-v08-target-ec90ae63daa3",
+      "client_session": null,
+      "name": null,
+      "backend": "ssh",
+      "host": "zhiyuan",
+      "state": "queued",
+      "pid": 4098224,
+      "backend_id": "~/.awaitless/jobs/job_01A01A8C60DEAAA3ECAD82",
+      "created_at": "2026-08-19T15:03:22.748028Z",
+      "updated_at": "2026-08-19T15:03:23.566724Z",
+      "started_at": null,
+      "finished_at": null,
+      "mcp_task_ttl_ms": null,
+      "queue": "accept-v08-ec90ae63daa3",
+      "device": null,
+      "device_mode": null,
+      "resources": {},
+      "phase": "unknown",
+      "queue_state": "queued",
+      "last_heartbeat_at": "2026-08-19T15:03:01Z",
+      "heartbeat_at": "2026-08-19T15:03:01Z",
+      "queue_wait_seconds": 1.13,
+      "elapsed_seconds": 1.13,
+      "duration_seconds": null,
+      "exit_code": null,
+      "last_output_at": null,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0,
+      "backend_connected": true,
+      "error": null
+    },
+    "blocker_result": {
+      "artifacts": [],
+      "backend": "ssh",
+      "backend_connected": true,
+      "backend_id": "~/.awaitless/jobs/job_01A01A8C5E83C914E00682",
+      "captured_logs": [],
+      "client_request_id": "accept-v08-blocker-ec90ae63daa3",
+      "client_session": null,
+      "created_at": "2026-08-19T15:03:01.272681Z",
+      "device": null,
+      "device_mode": null,
+      "duration_seconds": 8.038,
+      "elapsed_seconds": 8.038,
+      "environment_snapshot": {
+        "gpu_visible": null,
+        "non_interactive": true,
+        "npu_visible": null,
+        "path": null,
+        "shell": null
+      },
+      "error": null,
+      "exit_code": 0,
+      "finished_at": "2026-08-19T15:03:09.310820Z",
+      "heartbeat_at": "2026-08-19T15:03:09Z",
+      "host": "zhiyuan",
+      "job_id": "job_01A01A8C5E83C914E00682",
+      "last_heartbeat_at": "2026-08-19T15:03:09Z",
+      "last_output_at": null,
+      "mcp_task_ttl_ms": null,
+      "name": null,
+      "phase": "unknown",
+      "pid": 4097786,
+      "queue": "accept-v08-ec90ae63daa3",
+      "queue_state": "running",
+      "queue_wait_seconds": 0.0,
+      "resources": {},
+      "stage": "completed",
+      "started_at": "2026-08-19T15:03:01.272681Z",
+      "state": "succeeded",
+      "stderr_bytes": 0,
+      "stderr_tail": "",
+      "stdout_bytes": 0,
+      "stdout_tail": "",
+      "truncated": false,
+      "updated_at": "2026-08-19T15:03:33.181269Z",
+      "snapshot": {
+        "captured_at": "2026-08-19T15:03:34.100591Z",
+        "sha256": "d7559bdd1a78d2c2b1cea7eefef21700d3325b8b9be683ed83b60fdeb4f3e16c",
+        "size_bytes": 1054
+      },
+      "job_state": "succeeded",
+      "wait_state": "complete",
+      "delivery_state": "delivered"
+    }
+  },
+  "disconnect_recovery": {
+    "terminated": true,
+    "returncode": -15,
+    "job_id": "job_01A01A8C60DEAAA3ECAD82"
+  },
+  "quiet_heartbeat_snapshot": {
+    "job_id": "job_01A01A8C60DEAAA3ECAD82",
+    "client_request_id": "accept-v08-target-ec90ae63daa3",
+    "client_session": null,
+    "name": null,
+    "backend": "ssh",
+    "host": "zhiyuan",
+    "state": "running",
+    "pid": 4098224,
+    "backend_id": "~/.awaitless/jobs/job_01A01A8C60DEAAA3ECAD82",
+    "created_at": "2026-08-19T15:03:09.423808Z",
+    "updated_at": "2026-08-19T15:03:36.491840Z",
+    "started_at": "2026-08-19T15:03:09.423808Z",
+    "finished_at": null,
+    "mcp_task_ttl_ms": null,
+    "queue": "accept-v08-ec90ae63daa3",
+    "device": null,
+    "device_mode": null,
+    "resources": {},
+    "phase": "unknown",
+    "queue_state": "running",
+    "last_heartbeat_at": "2026-08-19T15:03:13Z",
+    "heartbeat_at": "2026-08-19T15:03:13Z",
+    "queue_wait_seconds": 0.0,
+    "elapsed_seconds": 27.388,
+    "duration_seconds": null,
+    "exit_code": null,
+    "last_output_at": null,
+    "stdout_bytes": 0,
+    "stderr_bytes": 0,
+    "backend_connected": true,
+    "error": null
+  },
+  "terminal_result": {
+    "artifacts": [
+      {
+        "content": {
+          "cc_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/cc",
+          "cmake_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/cmake",
+          "cmake_visible": true,
+          "cxx_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/c++",
+          "flock_path": "/usr/bin/flock",
+          "flock_visible": true,
+          "group_active": true,
+          "npu_smi_path": "/usr/local/bin/npu-smi",
+          "npu_smi_succeeded": true,
+          "npu_smi_visible": true,
+          "profile_sourced": true,
+          "toolchain_visible": true
+        },
+        "declared_path": "/tmp/awaitless-v08-ec90ae63daa3/acceptance.json",
+        "exists": true,
+        "modified_at": "2026-08-19T15:03:18.576000Z",
+        "path": "/tmp/awaitless-v08-ec90ae63daa3/acceptance.json",
+        "remote": true,
+        "sha256": "f48a7231579eb0a84484a4f286e97a9950e6947c1b5c16223b141d021d1660e5",
+        "size_bytes": 459
+      }
+    ],
+    "backend": "ssh",
+    "backend_connected": true,
+    "backend_id": "~/.awaitless/jobs/job_01A01A8C60DEAAA3ECAD82",
+    "captured_logs": [
+      {
+        "exists": false,
+        "path": "$AWAITLESS_ACCEPTANCE_ROOT/npu-smi.txt",
+        "tail": "",
+        "truncated": false
+      }
+    ],
+    "client_request_id": "accept-v08-target-ec90ae63daa3",
+    "client_session": null,
+    "created_at": "2026-08-19T15:03:09.423808Z",
+    "device": null,
+    "device_mode": null,
+    "duration_seconds": 9.169,
+    "elapsed_seconds": 9.169,
+    "environment_snapshot": {
+      "gpu_visible": null,
+      "non_interactive": true,
+      "npu_visible": null,
+      "path": null,
+      "shell": null
+    },
+    "error": null,
+    "exit_code": 0,
+    "finished_at": "2026-08-19T15:03:18.592782Z",
+    "heartbeat_at": "2026-08-19T15:03:17Z",
+    "host": "zhiyuan",
+    "job_id": "job_01A01A8C60DEAAA3ECAD82",
+    "last_heartbeat_at": "2026-08-19T15:03:17Z",
+    "last_output_at": null,
+    "mcp_task_ttl_ms": null,
+    "name": null,
+    "parsed_results": {
+      "cc_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/cc",
+      "cmake_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/cmake",
+      "cmake_visible": true,
+      "cxx_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/c++",
+      "flock_path": "/usr/bin/flock",
+      "flock_visible": true,
+      "group_active": true,
+      "npu_smi_path": "/usr/local/bin/npu-smi",
+      "npu_smi_succeeded": true,
+      "npu_smi_visible": true,
+      "profile_sourced": true,
+      "toolchain_visible": true
+    },
+    "phase": "unknown",
+    "pid": 4098224,
+    "queue": "accept-v08-ec90ae63daa3",
+    "queue_state": "running",
+    "queue_wait_seconds": 0.0,
+    "resources": {},
+    "stage": "completed",
+    "started_at": "2026-08-19T15:03:09.423808Z",
+    "state": "succeeded",
+    "stderr_bytes": 0,
+    "stderr_tail": "",
+    "stdout_bytes": 0,
+    "stdout_tail": "",
+    "truncated": false,
+    "updated_at": "2026-08-19T15:03:42.489828Z",
+    "snapshot": {
+      "captured_at": "2026-08-19T15:03:44.060656Z",
+      "sha256": "e1e3a9e593d8eda794c4262f385ee1baab9d84a9cca4bc614a6e525f6b714d8c",
+      "size_bytes": 2333
+    },
+    "job_state": "succeeded",
+    "wait_state": "complete",
+    "delivery_state": "delivered"
+  },
+  "artifact_manifest": {
+    "content": {
+      "cc_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/cc",
+      "cmake_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/cmake",
+      "cmake_visible": true,
+      "cxx_path": "/home/xflops/jhxu/ragged_softmax_moments/.venv/bin/c++",
+      "flock_path": "/usr/bin/flock",
+      "flock_visible": true,
+      "group_active": true,
+      "npu_smi_path": "/usr/local/bin/npu-smi",
+      "npu_smi_succeeded": true,
+      "npu_smi_visible": true,
+      "profile_sourced": true,
+      "toolchain_visible": true
+    },
+    "declared_path": "/tmp/awaitless-v08-ec90ae63daa3/acceptance.json",
+    "exists": true,
+    "modified_at": "2026-08-19T15:03:18.576000Z",
+    "path": "/tmp/awaitless-v08-ec90ae63daa3/acceptance.json",
+    "remote": true,
+    "sha256": "f48a7231579eb0a84484a4f286e97a9950e6947c1b5c16223b141d021d1660e5",
+    "size_bytes": 459
+  },
+  "checks": {
+    "execution_profile": true,
+    "cmake_and_toolchain": true,
+    "npu_device_visibility": true,
+    "remote_queue_and_flock": true,
+    "disconnect_recovery": true,
+    "quiet_job_heartbeat": true,
+    "artifact_path_size_sha256": true
+  }
+}
