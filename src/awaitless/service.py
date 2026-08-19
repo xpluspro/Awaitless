@@ -9,6 +9,7 @@ import shutil
 import time
 import glob
 import shlex
+import fcntl
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -560,14 +561,20 @@ class Service:
 
     def record_recent_job(self, result: dict[str, Any]) -> None:
         recent = self.settings.data_dir / "recent-jobs.json"
-        entries = []
-        if recent.is_file():
-            try:
-                entries = json.loads(recent.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                entries = []
-        entries = [result] + [item for item in entries if item.get("job_id") != result.get("job_id")]
-        atomic_json(recent, entries[:50])
+        lock_path = recent.with_suffix(recent.suffix + ".lock")
+        with lock_path.open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            entries = []
+            if recent.is_file():
+                try:
+                    entries = json.loads(recent.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    entries = []
+            entries = [result] + [
+                item for item in entries if item.get("job_id") != result.get("job_id")
+            ]
+            atomic_json(recent, entries[:50])
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def recover_last(self) -> dict[str, Any]:
         return self.recover_last_filtered()
