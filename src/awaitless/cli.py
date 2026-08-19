@@ -16,7 +16,7 @@ from .backends.ssh import SSHError
 from .config import adaptive_queue, load_settings
 from .constants import EXIT_CODES
 from .service import AwaitlessError, PreflightError, Service
-from .util import new_job_id, parse_duration
+from .util import new_job_id, parse_duration, utc_now
 
 
 def parser() -> argparse.ArgumentParser:
@@ -38,6 +38,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--cwd")
     run.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
     run.add_argument("--device", help="Ascend device ID; enables device visibility and exclusive scheduling")
+    run.add_argument("--device-mode", choices=["physical", "native"], default="physical")
     run.add_argument("--timeout")
     run.add_argument("--stall-timeout")
     run.add_argument("--inline-timeout")
@@ -66,6 +67,7 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--cwd")
     submit.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
     submit.add_argument("--device", help="Ascend device ID; enables device visibility and exclusive scheduling")
+    submit.add_argument("--device-mode", choices=["physical", "native"], default="physical")
     submit.add_argument("--timeout")
     submit.add_argument("--stall-timeout")
     submit.add_argument("--log-dir")
@@ -92,7 +94,10 @@ def parser() -> argparse.ArgumentParser:
     submit_group.add_argument("--host")
     submit_group.add_argument("--cwd")
     submit_group.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
-    submit_group.add_argument("--devices", required=True, help="comma-separated device IDs")
+    submit_group.add_argument("--devices", help="comma-separated device IDs")
+    submit_group.add_argument("--run-device", action="append", nargs=2, default=[], metavar=("DEVICE", "COMMAND"), help="device and its shell-like run command")
+    submit_group.add_argument("--device-mode", choices=["physical", "native"], default="physical")
+    submit_group.add_argument("--build", help="build command to run once before device fan-out")
     submit_group.add_argument("--timeout")
     submit_group.add_argument("--stall-timeout")
     submit_group.add_argument("--artifact", action="append", default=[])
@@ -162,6 +167,9 @@ def parser() -> argparse.ArgumentParser:
     doctor.add_argument("--cwd")
     doctor.add_argument("--devices", help="comma-separated device IDs")
     doctor.add_argument("--json", action="store_true")
+    recover = commands.add_parser("recover", help="recover the most recently detached job")
+    recover.add_argument("--last", action="store_true", required=True)
+    recover.add_argument("--json", action="store_true")
 
     demo = commands.add_parser(
         "demo",
@@ -399,17 +407,16 @@ def main(argv: list[str] | None = None) -> int:
             host = args.host or settings.default_host
             backend = args.backend or (str(settings.hosts.get(host, {}).get("backend", "ssh")) if host else settings.default_backend)
             group_id = args.group_id or new_job_id().lower()
-            devices = [item.strip() for item in args.devices.split(",") if item.strip()]
-            if backend == "ssh":
-                preflight = service.doctor_remote(host, cwd=args.cwd, devices=devices)  # type: ignore[arg-type]
-                if not preflight["ok"]:
-                    raise PreflightError(preflight)
+            devices = [item.strip() for item in (args.devices or "").split(",") if item.strip()]
+            run_commands = {device: command for device, command in args.run_device}
+            devices.extend(device for device in run_commands if device not in devices)
             result = service.submit_group(
                 group_id=group_id,
                 devices=devices,
                 command=command, backend=backend, host=host, cwd=args.cwd, env=_env(args.env),
                 timeout_seconds=parse_duration(args.timeout), stall_timeout_seconds=parse_duration(args.stall_timeout),
                 name=args.name, artifacts=args.artifact, queue_name=args.queue,
+                device_mode=args.device_mode, build=args.build, run_commands=run_commands,
             )
             _print(result, json_mode, quiet=args.quiet)
             return 0
@@ -427,10 +434,6 @@ def main(argv: list[str] | None = None) -> int:
                 if host
                 else settings.default_backend
             )
-            if backend == "ssh" and args.device:
-                preflight = service.doctor_remote(host, cwd=args.cwd, devices=[args.device])  # type: ignore[arg-type]
-                if not preflight["ok"]:
-                    raise PreflightError(preflight)
             queue = args.queue
             if args.action == "run":
                 queue = adaptive_queue(
@@ -448,8 +451,15 @@ def main(argv: list[str] | None = None) -> int:
                 client_request_id=args.client_request_id,
                 queue_name=queue,
                 device=args.device,
+                device_mode=args.device_mode,
             )
             if args.action == "run":
+                # Persist identity before entering the inline waiter so a killed
+                # client can still recover the managed workload.
+                service.record_recent_job({
+                    "job_id": result["job_id"], "state": result["state"],
+                    "delivery": "pending", "recorded_at": utc_now(),
+                })
                 inline_timeout = parse_duration(args.inline_timeout)
                 if inline_timeout is None:
                     inline_timeout = settings.adaptive_inline_timeout_seconds
@@ -477,6 +487,9 @@ def main(argv: list[str] | None = None) -> int:
                 if result.get(key) is not None
             }
             _print(output, json_mode, quiet=args.quiet)
+            return 0
+        if args.action == "recover":
+            _print(service.recover_last(), True, quiet=args.quiet)
             return 0
         if args.action == "wait":
             result, wait_timed_out = service.wait(args.job_id, parse_duration(args.timeout))

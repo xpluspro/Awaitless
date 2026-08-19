@@ -175,6 +175,30 @@ trap cleanup_registration EXIT
         exports = "\n".join(
             f"export {key}={shlex.quote(value)}" for key, value in spec.get("env", {}).items()
         )
+        device_preflight = ""
+        if spec.get("device") is not None:
+            physical = str(spec["device"])
+            device_preflight = f'''\
+if command -v npu-smi >/dev/null 2>&1; then
+  npu_ok=0
+  npu_err="$job_dir/npu-smi.stderr"
+  for attempt in 1 2 3; do
+    npu_tmp="$job_dir/.npu-smi.$attempt"
+    npu-smi info >"$npu_tmp" 2>"$npu_err"
+    npu_rc=$?
+    if [ "$npu_rc" -eq 0 ] && grep -Eq '(^|[^0-9]){physical}([^0-9]|$)' "$npu_tmp"; then npu_ok=1; break; fi
+    sleep 0.2
+  done
+  if [ "$npu_ok" -ne 1 ]; then
+    cat "$npu_err" > "$job_dir/stderr.log"
+    if [ "$npu_rc" -ne 0 ]; then echo 'device_driver_call_failed' >> "$job_dir/stderr.log"; else echo 'device_not_visible' >> "$job_dir/stderr.log"; fi
+    rc=21
+  fi
+else
+  echo 'npu-smi is unavailable' > "$job_dir/stderr.log"
+  rc=21
+fi
+'''
         timeout = spec.get("timeout_seconds")
         if timeout:
             command = f"timeout --signal=TERM --kill-after=2s {float(timeout):g}s {command}"
@@ -210,7 +234,12 @@ date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$tmp.started_at" && mv "$tmp.started_at" "$job
 {cwd_line}
 cd_rc=$?
 {exports}
-if [ "$cd_rc" -eq 0 ]; then
+rc=0
+{device_preflight}
+if [ "$cd_rc" -ne 0 ]; then
+  echo "working directory does not exist: {shlex.quote(spec.get('cwd') or '')}" >"$job_dir/stderr.log"
+  rc=125
+elif [ "$rc" -eq 0 ]; then
   (
     # Keep the slot lock in this wrapper, but never leak its descriptor into
     # user processes (including children that intentionally daemonize).
@@ -218,9 +247,6 @@ if [ "$cd_rc" -eq 0 ]; then
     {command}
   ) >"$job_dir/stdout.log" 2>"$job_dir/stderr.log"
   rc=$?
-else
-  echo "working directory does not exist: {shlex.quote(spec.get('cwd') or '')}" >"$job_dir/stderr.log"
-  rc=125
 fi
 kill "$heartbeat_pid" 2>/dev/null || true
 wait "$heartbeat_pid" 2>/dev/null || true

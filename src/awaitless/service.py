@@ -16,7 +16,7 @@ from .backends.ssh import SSHError
 from .config import Settings
 from .constants import TERMINAL_STATES
 from .db import Store
-from .util import atomic_json, parse_time, utc_now
+from .util import atomic_json, new_job_id, parse_time, utc_now
 
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -56,16 +56,31 @@ class Service:
     def close(self) -> None:
         self.store.close()
 
-    def submit_group(self, *, group_id: str, devices: list[str], **kwargs: Any) -> dict[str, Any]:
+    def submit_group(self, *, group_id: str, devices: list[str], build: str | None = None, run_commands: dict[str, str] | None = None, **kwargs: Any) -> dict[str, Any]:
         if not QUEUE_NAME.fullmatch(group_id):
             raise AwaitlessError("group ID must use letters, digits, dot, underscore, or hyphen")
         if not devices:
             raise AwaitlessError("at least one device is required for a group")
+        build_result = None
+        if build:
+            build_kwargs = dict(kwargs)
+            build_kwargs.pop("command", None)
+            build_kwargs["queue_name"] = None
+            build_kwargs["device_mode"] = "physical"
+            build_result = self.submit(job_id=new_job_id(), command=shlex.split(build), device=None, **build_kwargs)
+            build_result, _ = self.wait(build_result["job_id"])
+            if build_result.get("state") != "succeeded":
+                raise AwaitlessError(f"build failed before group fan-out: {build_result.get('job_id')}")
         jobs = []
         for device in devices:
-            from .util import new_job_id
-            jobs.append(self.submit(job_id=new_job_id(), device=device, **kwargs))
+            job_kwargs = dict(kwargs)
+            command = job_kwargs.pop("command")
+            if run_commands and device in run_commands:
+                command = shlex.split(run_commands[device])
+            jobs.append(self.submit(job_id=new_job_id(), device=device, command=command, **job_kwargs))
         payload = {"group_id": group_id, "created_at": utc_now(), "job_ids": [item["job_id"] for item in jobs], "devices": devices}
+        if build_result:
+            payload["build_job_id"] = build_result["job_id"]
         atomic_json(self.settings.data_dir / "groups" / f"{group_id}.json", payload)
         return {**payload, "jobs": jobs}
 
@@ -116,6 +131,7 @@ class Service:
         mcp_task_ttl_ms: int | None = None,
         queue_name: str | None = None,
         device: str | None = None,
+        device_mode: str = "physical",
     ) -> dict[str, Any]:
         if not command:
             raise AwaitlessError("a command is required after --")
@@ -130,8 +146,12 @@ class Service:
                 raise AwaitlessError("device must be a numeric device ID")
             device = str(device)
             env = dict(env)
+            if device_mode not in {"physical", "native"}:
+                raise AwaitlessError("device-mode must be physical or native")
+            env.setdefault("AWAITLESS_PHYSICAL_DEVICE", device)
             env.setdefault("ASCEND_RT_VISIBLE_DEVICES", device)
-            env.setdefault("ASCEND_DEVICE_ID", device)
+            env.setdefault("ASCEND_DEVICE_ID", "0" if device_mode == "physical" else device)
+            env.setdefault("RANK_ID", "0")
             if queue_name is None:
                 queue_name = f"device-{device}"
                 if host:
@@ -212,6 +232,8 @@ class Service:
             "artifacts": artifacts,
             "backend_options": backend_options or {},
             "queue": queue_name,
+            "device": device,
+            "device_mode": device_mode if device is not None else None,
             "created_at": utc_now(),
         }
         spec = {
@@ -227,6 +249,8 @@ class Service:
                 if queue_name and queue
                 else None
             ),
+            "device": device,
+            "device_mode": device_mode,
         }
         values = {
             "job_id": job_id,
@@ -245,6 +269,8 @@ class Service:
             "artifacts_json": json.dumps(artifacts),
             "mcp_task_ttl_ms": mcp_task_ttl_ms,
             "queue_name": queue_name,
+            "device": device,
+            "device_mode": device_mode if device is not None else None,
         }
         if client_request_id is not None:
             fingerprint = _submission_fingerprint(
@@ -429,7 +455,28 @@ class Service:
             else None,
             inline_timeout_seconds=inline_timeout_seconds,
         )
+        if detached:
+            self.record_recent_job(result)
         return result
+
+    def record_recent_job(self, result: dict[str, Any]) -> None:
+        recent = self.settings.data_dir / "recent-jobs.json"
+        entries = []
+        if recent.is_file():
+            try: entries = json.loads(recent.read_text(encoding="utf-8"))
+            except (OSError, ValueError): entries = []
+        entries = [result] + [item for item in entries if item.get("job_id") != result.get("job_id")]
+        atomic_json(recent, entries[:50])
+
+    def recover_last(self) -> dict[str, Any]:
+        path = self.settings.data_dir / "recent-jobs.json"
+        if not path.is_file():
+            raise AwaitlessError("no detached jobs have been recorded")
+        entries = json.loads(path.read_text(encoding="utf-8"))
+        if not entries:
+            raise AwaitlessError("no detached jobs have been recorded")
+        job_id = entries[0].get("job_id")
+        return self.status(job_id) if job_id else entries[0]
 
     def completions(
         self,
@@ -587,7 +634,8 @@ class Service:
         error = (result.get("error") or "").lower()
         text = f"{stderr}\n{error}"
         if result.get("exit_code") == 21 or "npu-smi" in text or "device" in text and ("unavailable" in text or "busy" in text):
-            stage, reason, retryable = "device_unavailable", "device_unavailable", True
+            stage, retryable = "device_unavailable", True
+            reason = "device_driver_call_failed" if "device_driver_call_failed" in text else ("device_not_visible" if "device_not_visible" in text else ("device_busy" if "busy" in text else "device_unavailable"))
             suggestion = "Wait for the device or submit with another --device; check ASCEND_RT_VISIBLE_DEVICES."
         elif any(marker in text for marker in ("cmake error", "ninja: build stopped", "make: ***")):
             stage, reason, retryable = "build_failed", "build_failed", False
@@ -787,6 +835,8 @@ class Service:
             "started_at": job["started_at"], "finished_at": job["finished_at"],
             "mcp_task_ttl_ms": job.get("mcp_task_ttl_ms"),
             "queue": job.get("queue_name"),
+            "device": job.get("device"),
+            "device_mode": job.get("device_mode"),
             "queue_wait_seconds": round(queue_wait, 3) if queue_wait is not None else None,
             "elapsed_seconds": round(elapsed, 3),
             "duration_seconds": round(duration, 3) if duration is not None else None,

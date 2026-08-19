@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     mcp_task_ttl_ms INTEGER,
     queue_name TEXT,
     queue_order INTEGER,
+    device TEXT,
+    device_mode TEXT,
     error TEXT,
     updated_at TEXT NOT NULL
 );
@@ -91,6 +93,8 @@ class Store:
             ("mcp_task_ttl_ms", "INTEGER"),
             ("queue_name", "TEXT"),
             ("queue_order", "INTEGER"),
+            ("device", "TEXT"),
+            ("device_mode", "TEXT"),
         ):
             if column not in existing:
                 self.connection.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
