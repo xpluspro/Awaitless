@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "name": "awaitless-tool-selection-v0.8",
+  "expected_version": "0.8.0",
+  "temperature": 0,
+  "max_completion_tokens": 1024,
+  "max_agent_turns": 6,
+  "scenarios": [
+    {
+      "id": "quick-command",
+      "prompt": "Run python -m pytest tests/test_util.py. It is probably quick, but use the normal Awaitless execution path and report the result.",
+      "expected_calls": ["run"],
+      "responses": [{"delivery":"inline","job_id":"job_quick","state":"succeeded","exit_code":0}],
+      "final_contains": {"state":"succeeded","exit_code":0}
+    },
+    {
+      "id": "long-command-unknown",
+      "prompt": "Run ./build.sh. Its duration is unknown. Complete the work and report its terminal result without polling.",
+      "expected_calls": ["run", "wait_for_job"],
+      "responses": [
+        {"delivery":"detached","job_id":"job_long","state":"running"},
+        {"job_id":"job_long","state":"succeeded","exit_code":0}
+      ],
+      "expected_arguments": [{}, {"job_id":"job_long"}],
+      "final_contains": {"state":"succeeded","exit_code":0}
+    },
+    {
+      "id": "explicit-async",
+      "prompt": "Submit ./train.sh explicitly asynchronously. Return after submission; I will consume it later.",
+      "expected_calls": ["submit_job"],
+      "responses": [{"job_id":"job_async","state":"running"}],
+      "final_contains": {"job_id":"job_async"}
+    },
+    {
+      "id": "fan-out-two",
+      "prompt": "Run two independent commands, ./case-a and ./case-b, as asynchronous fan-out. Submit both before collecting their terminal results.",
+      "expected_calls": ["submit_job", "submit_job", "wait_for_completions"],
+      "responses": [
+        {"job_id":"job_a","state":"running"},
+        {"job_id":"job_b","state":"running"},
+        {"completions":[{"completion_id":"cmp_1","job_id":"job_a","result":{"state":"succeeded","exit_code":0}},{"completion_id":"cmp_2","job_id":"job_b","result":{"state":"succeeded","exit_code":0}}],"next_cursor":"cmp_2","active_job_ids":[]}
+      ],
+      "final_contains": {"state":"succeeded","exit_code":0}
+    },
+    {
+      "id": "disconnect-recovery",
+      "tags": ["recovery"],
+      "prompt": "A previous client disconnected after creating job_id job_recover. Resume that exact Job, wait for its result, and do not submit anything.",
+      "expected_calls": ["wait_for_job"],
+      "responses": [{"job_id":"job_recover","state":"succeeded","exit_code":0}],
+      "expected_arguments": [{"job_id":"job_recover"}],
+      "final_contains": {"state":"succeeded"}
+    },
+    {
+      "id": "status-now",
+      "prompt": "Tell me the current status of job_id job_status now. Do not wait for it to finish.",
+      "expected_calls": ["get_job_status"],
+      "responses": [{"job_id":"job_status","state":"running","phase":"compile"}],
+      "expected_arguments": [{"job_id":"job_status"}],
+      "final_contains": {"state":"running"}
+    },
+    {
+      "id": "failed-log-diagnostics",
+      "prompt": "job_id job_failed has already been reported failed. Inspect a bounded diagnostic log tail and summarize the failure.",
+      "expected_calls": ["get_job_logs"],
+      "responses": [{"job_id":"job_failed","state":"failed","stderr_tail":"CMake Error: compiler missing","truncated":false}],
+      "expected_arguments": [{"job_id":"job_failed"}],
+      "final_contains": {"state":"failed"}
+    },
+    {
+      "id": "idempotent-lost-create",
+      "tags": ["recovery"],
+      "prompt": "The response to an asynchronous submission was lost, so no job_id is known. Retry the same ./benchmark command using client_request_id bench-42; do not invent a new request ID.",
+      "expected_calls": ["submit_job"],
+      "responses": [{"job_id":"job_bench","state":"running","idempotent_replay":true}],
+      "expected_arguments": [{"client_request_id":"bench-42"}],
+      "final_contains": {"job_id":"job_bench"}
+    },
+    {
+      "id": "known-id-continuation",
+      "tags": ["recovery"],
+      "prompt": "Continue known job_id job_known through terminal result delivery. Never recreate it.",
+      "expected_calls": ["wait_for_job"],
+      "responses": [{"job_id":"job_known","state":"succeeded","exit_code":0}],
+      "expected_arguments": [{"job_id":"job_known"}],
+      "final_contains": {"state":"succeeded"}
+    },
+    {
+      "id": "mcp-tasks-client",
+      "prompt": "This client negotiated io.modelcontextprotocol/tasks and explicitly needs a Task handle for ./compile. Use stable client_request_id task-compile-7.",
+      "expected_calls": ["run_job"],
+      "responses": [{"resultType":"task","taskId":"job_task","status":"working"}],
+      "expected_arguments": [{"client_request_id":"task-compile-7"}],
+      "final_contains": {"taskId":"job_task"}
+    },
+    {
+      "id": "completion-cursor-resume",
+      "tags": ["recovery"],
+      "prompt": "Resume collection for job_ids job_a and job_b after durable cursor cmp_7. Do not query each status.",
+      "expected_calls": ["wait_for_completions"],
+      "responses": [{"completions":[{"completion_id":"cmp_8","job_id":"job_b","result":{"state":"succeeded","exit_code":0}}],"next_cursor":"cmp_8","active_job_ids":[]}],
+      "expected_arguments": [{"job_ids":["job_a","job_b"],"after_cursor":"cmp_7"}],
+      "final_contains": {"next_cursor":"cmp_8"}
+    },
+    {
+      "id": "waiter-timeout-recovery",
+      "tags": ["recovery"],
+      "prompt": "A previous wait timed out client-side for job_id job_wait, but the Job kept running. Continue waiting for that same Job; never resubmit it.",
+      "expected_calls": ["wait_for_job"],
+      "responses": [{"job_id":"job_wait","state":"succeeded","exit_code":0}],
+      "expected_arguments": [{"job_id":"job_wait"}],
+      "final_contains": {"state":"succeeded"}
+    },
+    {
+      "id": "completion-disconnect-replay",
+      "tags": ["recovery"],
+      "prompt": "The completion response after cursor cmp_12 was lost before it was processed. Replay collection for job_ids job_x and job_y from cmp_12.",
+      "expected_calls": ["wait_for_completions"],
+      "responses": [{"completions":[{"completion_id":"cmp_13","job_id":"job_x","result":{"state":"failed","exit_code":2}}],"next_cursor":"cmp_13","active_job_ids":["job_y"]}],
+      "expected_arguments": [{"job_ids":["job_x","job_y"],"after_cursor":"cmp_12"}],
+      "final_contains": {"next_cursor":"cmp_13"}
+    },
+    {
+      "id": "quiet-heartbeat-snapshot",
+      "prompt": "job_id job_quiet has produced no output for a long time. I only need an immediate liveness snapshot now, including heartbeat; do not wait.",
+      "expected_calls": ["get_job_status"],
+      "responses": [{"job_id":"job_quiet","state":"running","last_output_at":null,"last_heartbeat_at":"2026-08-19T08:00:00Z"}],
+      "expected_arguments": [{"job_id":"job_quiet"}],
+      "final_contains": {"state":"running"}
+    },
+    {
+      "id": "stalled-log-inspection",
+      "prompt": "A terminal observation already says job_id job_stalled is stalled. Read only bounded logs to diagnose it.",
+      "expected_calls": ["get_job_logs"],
+      "responses": [{"job_id":"job_stalled","state":"stalled","stdout_tail":"phase=download","truncated":true}],
+      "expected_arguments": [{"job_id":"job_stalled"}],
+      "final_contains": {"state":"stalled"}
+    },
+    {
+      "id": "artifact-consumption",
+      "prompt": "Wait for job_id job_artifact and report the SHA-256 from its declared Artifact manifest, not from logs.",
+      "expected_calls": ["wait_for_job"],
+      "responses": [{"job_id":"job_artifact","state":"succeeded","exit_code":0,"artifacts":[{"path":"result.json","exists":true,"size_bytes":11,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content":{"ok":true}}]}],
+      "expected_arguments": [{"job_id":"job_artifact"}],
+      "final_contains": {"artifact_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+    },
+    {
+      "id": "fast-command-default",
+      "prompt": "Run printf ok. Although it should be fast, use Awaitless's default command execution tool and report completion.",
+      "expected_calls": ["run"],
+      "responses": [{"delivery":"inline","job_id":"job_fast","state":"succeeded","exit_code":0}],
+      "final_contains": {"state":"succeeded"}
+    },
+    {
+      "id": "default-queued-resource",
+      "prompt": "Run ./npu-test on the operator-configured default scarce-resource queue. Its queue time is unknown; use the default adaptive execution path.",
+      "expected_calls": ["run", "wait_for_job"],
+      "responses": [{"delivery":"detached","job_id":"job_queue","state":"queued"},{"job_id":"job_queue","state":"succeeded","exit_code":0}],
+      "expected_arguments": [{}, {"job_id":"job_queue"}],
+      "final_contains": {"state":"succeeded"}
+    },
+    {
+      "id": "single-known-not-completions",
+      "prompt": "Wait for the final result of the single known job_id job_one. This is not a batch.",
+      "expected_calls": ["wait_for_job"],
+      "responses": [{"job_id":"job_one","state":"succeeded","exit_code":0}],
+      "expected_arguments": [{"job_id":"job_one"}],
+      "final_contains": {"state":"succeeded"}
+    },
+    {
+      "id": "batch-completion-artifact",
+      "prompt": "Collect already-submitted job_ids job_m and job_n together. Report the result.json Artifact SHA-256 delivered for job_n. Do not poll either Job.",
+      "expected_calls": ["wait_for_completions"],
+      "responses": [{"completions":[{"completion_id":"cmp_20","job_id":"job_m","result":{"state":"succeeded","exit_code":0}},{"completion_id":"cmp_21","job_id":"job_n","result":{"state":"succeeded","exit_code":0,"artifacts":[{"path":"result.json","exists":true,"size_bytes":12,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}}],"next_cursor":"cmp_21","active_job_ids":[]}],
+      "expected_arguments": [{"job_ids":["job_m","job_n"]}],
+      "final_contains": {"artifact_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+    }
+  ]
+}

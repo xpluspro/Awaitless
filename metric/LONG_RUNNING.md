@@ -68,7 +68,7 @@
 | `pytest` | `python -m pytest -q` | test 内 sleep | pytest 模块不可用 |
 | `docker_build` | `docker build --no-cache` | Dockerfile `RUN sleep` | daemon 或本地 base image 不可用 |
 | `npm_install` | `npm install` | install script timer | npm 或原生 node 不可用 |
-| `model_inference` | DeepSeek Chat Completions | 多次真实推理请求 | `.env` LLM 配置不完整 |
+| `model_inference` | OpenAI-compatible Chat Completions (`gpt-5.6-luna`) | 多次真实推理请求 | `.env` LLM 配置不完整 |
 | `command` | 用户提供的 argv | 由真实项目决定 | required command/cwd 不可用 |
 
 前六个是受控 fixture：三组执行完全相同的真实命令，同时用固定长阶段降低机器和缓存噪声。
@@ -127,20 +127,6 @@ python3 metric/analyze_long_running.py metric/results/raw/long-running-evidence.
 可用 `--workload cargo_build` 重复筛选任务，也可用 `--trials` 覆盖样本数。不可用 adapter 会写
 一条带 probe reason 的 `skip` 记录，不会伪造成失败或成功。
 
-## 当前方向性观测
+## 历史采集说明
 
-2026-08-10 的一次 5 秒 sleep 校准（每格 `n=1`）只用于验证 crossover 和采集链路：
-
-- single：Awaitless 让 Agent 提前 91.2% 释放、blocked time 减少 86.8%，但总时延增加 13.8%；
-- batch=3：相比单槽 Blocking，Awaitless makespan 减少 51.7%；
-- 强并发 Blocking 的 batch makespan 为 5.09 秒，Awaitless 为 7.39 秒，Awaitless 慢 45.2%；
-- disconnect：Awaitless 1/1 恢复成功，两种直接 Blocking 均无法恢复。
-
-另一次单请求模型 inference smoke 中三组均正确，workload usage 均为 54 prompt + 11
-completion token。Awaitless 提前 65.0% 释放 Agent，但因为立即 `wait`，blocked time 和总时延
-都比直接 Blocking 高约 42%。这验证了一个关键前提：Awaitless 提供“可以释放”的协议能力，
-只有 Agent 在 submit 与 collect 之间实际安排其他工作时，才能形成可用时间收益。
-
-这不是可发布性能结论：样本只有一次，任务是受控 sleep，当前机器也缺少 Cargo、pytest、
-Docker WSL 集成和原生 Node。它已经证明 benchmark 会诚实展示短任务/强并发 Blocking 可能
-获胜的区域。
+旧版本的单次 sleep 校准仅用于验证采集链路，不是 v0.8 性能证据，发布报告不得引用其数字。

@@ -3,7 +3,6 @@ include CHANGELOG.md
 include CONTRIBUTING.md
 include server.json
 recursive-include assets *.gif *.json
-recursive-include benchmarks *.md *.py *.json
 recursive-include docs *.md *.json
 recursive-include examples *.py *.toml
 recursive-include metric *.md *.py *.json

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "agent-v0.8-real-workload",
+  "expected_version": "0.8.0",
+  "description": "Twenty paired fresh-session recovery trials using gpt-5.6-luna and a real targeted pytest workload.",
+  "trials": 20,
+  "seed": 20260819,
+  "arms": ["tmux_plain", "tmux_wrapped", "awaitless"],
+  "poll_interval_seconds": 0.25,
+  "wait_interrupt_after_seconds": 0.1,
+  "log_tail_lines": 80,
+  "max_return_bytes": 65536,
+  "max_agent_turns": 16,
+  "temperature": 0,
+  "max_completion_tokens": 4096,
+  "scenarios": {
+    "recovery": {
+      "duration_seconds": 0.2,
+      "line_count": 8,
+      "line_bytes": 256,
+      "exit_codes": [0],
+      "pre_command": ["{python}", "-m", "pytest", "tests/test_util.py", "-q"],
+      "pre_cwd": "{workspace}"
+    }
+  }
+}

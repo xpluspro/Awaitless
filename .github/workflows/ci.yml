@@ -79,8 +79,6 @@ jobs:
           python -m json.tool server.json >/dev/null
           python -m json.tool assets/demo-session.json >/dev/null
           python -m json.tool assets/mcp-slurm-demo.json >/dev/null
-          python -m json.tool benchmarks/results/polling-vs-awaitless.json >/dev/null
-          python -m json.tool benchmarks/results/completion-feed.json >/dev/null
           python -m json.tool metric/configs/smoke.json >/dev/null
           python -m json.tool metric/configs/evidence-local.json >/dev/null
           python -m json.tool metric/configs/agent-smoke.json >/dev/null
@@ -93,11 +91,16 @@ jobs:
           python -m json.tool metric/schemas/trial.schema.json >/dev/null
           python -m json.tool metric/schemas/long-running-trial.schema.json >/dev/null
           python -m json.tool docs/schemas/completion-feed.schema.json >/dev/null
-          python benchmarks/polling_vs_awaitless.py --help >/dev/null
-          python benchmarks/completion_feed.py --help >/dev/null
+          python -m json.tool metric/configs/tool-selection-v0.8.json >/dev/null
+          python -m json.tool metric/configs/agent-v0.8.json >/dev/null
+          python -m json.tool metric/configs/fault-matrix-v0.8.json >/dev/null
+          python -m json.tool metric/configs/spectrum-v0.8.json >/dev/null
+          python -m json.tool assets/remote-acceptance-v0.8.json >/dev/null
           python metric/run_local.py --help >/dev/null
           python metric/analyze.py --help >/dev/null
           python metric/run_agent.py --help >/dev/null
+          python metric/run_tool_selection.py --help >/dev/null
+          python metric/run_spectrum.py --help >/dev/null
           python metric/run_long_running.py --help >/dev/null
           python metric/analyze_long_running.py --help >/dev/null
           python metric/long_workload.py --help >/dev/null
@@ -105,6 +108,7 @@ jobs:
           python metric/baselines/tmux_job.py --help >/dev/null
           python scripts/create_demo_gif.py --help >/dev/null
           python scripts/mcp_slurm_demo.py --help >/dev/null
+          python scripts/acceptance_v08_remote.py --help >/dev/null
 
       - name: Validate MCP Registry metadata
         run: |

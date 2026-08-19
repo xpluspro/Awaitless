@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run paired DeepSeek tool-using Agent trials and record actual API usage."""
+"""Run paired tool-using Agent trials and record actual API usage."""
 
 from __future__ import annotations
 
@@ -44,8 +44,8 @@ class AgentExperimentError(RuntimeError):
     """An experiment, protocol, or API failure safe to persist in a trial."""
 
 
-class DeepSeekAPIError(AgentExperimentError):
-    """A DeepSeek request failed after bounded retries."""
+class ModelAPIError(AgentExperimentError):
+    """An OpenAI-compatible model request failed after bounded retries."""
 
 
 def utc_now() -> str:
@@ -79,26 +79,33 @@ class LLMConfig:
     timeout_seconds: float
 
     @classmethod
-    def load(cls, path: Path) -> "LLMConfig":
+    def load(cls, path: Path, *, model_override: str | None = None) -> "LLMConfig":
         file_values = parse_dotenv(path)
 
-        def value(name: str) -> str:
-            result = os.environ.get(name, file_values.get(name, "")).strip()
+        def value(name: str, *aliases: str, default: str = "") -> str:
+            result = next(
+                (
+                    os.environ.get(candidate, file_values.get(candidate, ""))
+                    for candidate in (name, *aliases)
+                    if os.environ.get(candidate, file_values.get(candidate, ""))
+                ),
+                default,
+            ).strip()
             if not result:
                 raise ValueError(f"missing {name} in environment or {path}")
             return result
 
-        base_url = value("LLM_BASE_URL").rstrip("/")
+        base_url = value("LLM_BASE_URL", "BASE_URL").rstrip("/")
         parsed = parse.urlparse(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("LLM_BASE_URL must be an absolute HTTP(S) URL")
-        timeout = float(value("LLM_TIMEOUT_SECONDS"))
+        timeout = float(value("LLM_TIMEOUT_SECONDS", default="60"))
         if timeout <= 0:
             raise ValueError("LLM_TIMEOUT_SECONDS must be positive")
         return cls(
-            api_key=value("LLM_API_KEY"),
+            api_key=value("LLM_API_KEY", "API_KEY"),
             base_url=base_url,
-            model=value("LLM_MODEL"),
+            model=model_override or value("LLM_MODEL", "MODEL", default="gpt-5.6-luna"),
             timeout_seconds=timeout,
         )
 
@@ -119,7 +126,7 @@ class APIResponse:
     duration_seconds: float
 
 
-class DeepSeekClient:
+class ModelClient:
     def __init__(self, config: LLMConfig, *, retries: int = 4):
         self.config = config
         self.retries = retries
@@ -146,7 +153,7 @@ class DeepSeekClient:
                     raw = response.read()
                 value = json.loads(raw.decode("utf-8"))
                 if not isinstance(value, dict):
-                    raise DeepSeekAPIError("DeepSeek returned a non-object response")
+                    raise ModelAPIError("model returned a non-object response")
                 return APIResponse(value, attempt, time.monotonic() - started)
             except error.HTTPError as exc:
                 body = exc.read(4096).decode("utf-8", errors="replace")
@@ -162,8 +169,8 @@ class DeepSeekClient:
                 last_error = f"{type(exc).__name__}: {str(exc)[:500]}"
             if attempt <= self.retries:
                 time.sleep(min(8.0, 2.0 ** (attempt - 1)))
-        raise DeepSeekAPIError(
-            f"DeepSeek request failed after {min(attempt, self.retries + 1)} attempts: {last_error}"
+        raise ModelAPIError(
+            f"model request failed after {min(attempt, self.retries + 1)} attempts: {last_error}"
         )
 
 
@@ -220,15 +227,15 @@ class LLMUsage:
     def add(self, *, phase: str, response: APIResponse) -> dict[str, Any]:
         choices = response.value.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise DeepSeekAPIError("DeepSeek response contained no choices")
+            raise ModelAPIError("model response contained no choices")
         choice = choices[0]
         message = choice.get("message")
         usage = response.value.get("usage")
         if not isinstance(message, dict) or not isinstance(usage, dict):
-            raise DeepSeekAPIError("DeepSeek response omitted message or usage")
+            raise ModelAPIError("model response omitted message or usage")
         for required in ("prompt_tokens", "completion_tokens", "total_tokens"):
             if not isinstance(usage.get(required), int):
-                raise DeepSeekAPIError(f"DeepSeek usage omitted integer {required}")
+                raise ModelAPIError(f"model usage omitted integer {required}")
         tool_names = [
             item.get("function", {}).get("name")
             for item in message.get("tool_calls", []) or []
@@ -449,7 +456,7 @@ class AgentToolSession:
 
 def model_step(
     *,
-    client: DeepSeekClient,
+    client: ModelClient,
     usage: LLMUsage,
     phase: str,
     messages: list[dict[str, Any]],
@@ -464,14 +471,21 @@ def model_step(
         "response_format": {"type": "json_object"},
         "stream": False,
     }
-    # DeepSeek V4 thinking mode supports tools but rejects tool_choice. When a
+    # The configured OpenAI-compatible thinking model supports tools but rejects
+    # tool_choice. When a
     # tool is required, the runner validates that the model actually emitted
     # exactly one call. Once the result is complete, tools are omitted so the
     # model must produce the final JSON response.
     if tools:
         payload["tools"] = tools
     response = client.chat(payload)
-    return usage.add(phase=phase, response=response)
+    message = usage.add(phase=phase, response=response)
+    observed_model = usage.traces[-1]["model"]
+    if observed_model != client.config.model:
+        raise ModelAPIError(
+            f"requested model {client.config.model!r}, response reported {observed_model!r}"
+        )
+    return message
 
 
 def final_prompt(job_id: str) -> str:
@@ -534,7 +548,7 @@ def run_agent_trial(
     spec: run_local.ScenarioSpec,
     work: Path,
     experiment_config: dict[str, Any],
-    client: DeepSeekClient,
+    client: ModelClient,
 ) -> tuple[AgentToolSession, LLMUsage, str | None, dict[str, Any] | None, str | None]:
     session = AgentToolSession(arm=arm, spec=spec, work=work, config=experiment_config)
     usage = LLMUsage()
@@ -683,6 +697,9 @@ def build_record(
             "log_contract_correct": assessment["log_contract_correct"],
             "recovery_success": result_correct,
             "cancel_cleanup_success": None,
+            "duplicate_launch": sum(
+                event["operation"] == "submit_job" for event in session.events
+            ) > 1,
             "agent_answer_correct": final_correct,
             "agent_tool_calls": len(session.events),
             "agent_visible_bytes": sum(event["response_bytes"] for event in session.events),
@@ -706,7 +723,7 @@ def build_record(
         "events": session.events,
         "arm_metadata": run_local.arm_class(arm).metadata,
         "llm": {
-            "provider": "deepseek",
+            "provider": "openai-compatible",
             "model": environment["llm_model"],
             "base_url_origin": environment["llm_base_url_origin"],
             "client_reset_after_submit": True,
@@ -733,7 +750,7 @@ def validate_agent_config(config: dict[str, Any]) -> None:
         raise ValueError("max_completion_tokens must be positive")
 
 
-def preflight(client: DeepSeekClient, experiment_config: dict[str, Any]) -> dict[str, Any]:
+def preflight(client: ModelClient, experiment_config: dict[str, Any]) -> dict[str, Any]:
     usage = LLMUsage()
     response = model_step(
         client=client,
@@ -767,6 +784,7 @@ def preflight(client: DeepSeekClient, experiment_config: dict[str, Any]) -> dict
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--env-file", type=Path, default=DEFAULT_ENV)
+    result.add_argument("--model", default="gpt-5.6-luna", help="model identifier for this evidence run")
     result.add_argument(
         "--config", type=Path, default=METRIC_ROOT / "configs" / "agent-smoke.json"
     )
@@ -780,7 +798,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        llm_config = LLMConfig.load(args.env_file)
+        llm_config = LLMConfig.load(args.env_file, model_override=args.model)
         experiment_config = json.loads(args.config.read_text(encoding="utf-8"))
         if args.trials is not None:
             experiment_config["trials"] = args.trials
@@ -788,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"agent metric: {exc}", file=sys.stderr)
         return 2
-    client = DeepSeekClient(llm_config)
+    client = ModelClient(llm_config)
     if args.preflight:
         try:
             print(json.dumps(preflight(client, experiment_config), separators=(",", ":")))
@@ -809,7 +827,7 @@ def main(argv: list[str] | None = None) -> int:
     environment = run_local.base_environment(args.config, experiment_config)
     environment.update(
         experiment_kind="llm_agent",
-        llm_provider="deepseek",
+        llm_provider="openai-compatible",
         llm_model=llm_config.model,
         llm_base_url_origin=llm_config.safe_origin,
         llm_timeout_seconds=llm_config.timeout_seconds,

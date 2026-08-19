@@ -134,32 +134,18 @@ If the client disappears, a new session can continue from the saved cursor.
 Awaitless makes continuation results durably available—it does not run the
 agent's next reasoning step or require a resident notification service.
 
-In the checked-in deterministic three-Job protocol case, per-Job polling and
-retrieval used 13 Agent-visible CLI calls while the completion feed used 6. It
-is a protocol benchmark, not a model or token claim. See the
-[method and raw result](benchmarks/README.md#multi-job-completion-benchmark).
+The v0.8 evidence suite replaces historical call-count demos with four
+questions: does an Agent choose the protocol correctly, does a Job survive
+faults without duplicate launch, does Awaitless keep execution-management state
+out of the reasoning loop, and does adaptive `run` preserve low friction for
+short commands? See the [v0.8 evidence plan](metric/README.md#v08-evidence-suite).
 
-## Measured on real agent workloads
+## v0.8 evidence status
 
-These results show why a maintained execution protocol is useful; reduced tool
-calls and tokens are evidence, not the product category.
-
-| Result | Plain tmux / polling | Awaitless |
-|---|---:|---:|
-| Median tool calls in 20 paired Agent cases | 7 | **2 (71.4% fewer)** |
-| API usage tokens per correct job | 25,974.2 | **3,820.8 (85.3% fewer)** |
-| Agent-visible calls in a real SSH polling workload | 13 | **2** |
-
-The Agent results used the same DeepSeek model, prompt, workload, and seed on
-2026-08-10. Awaitless returned the correct task state, exit code, Artifact, and
-log contract in 20/20 cases; one empty final model response made the strict
-end-to-end score 19/20. A strong 319-line tmux wrapper also reached two calls
-and used 9.2% fewer tokens than Awaitless—the value there is the built-in,
-maintained protocol rather than a universal token advantage.
-
-Read the [full Agent report](metric/results/deepseek-agent-v2-report.md), the
-[benchmark methodology](metric/README.md), and the separate
-[SSH polling experiment with raw results](benchmarks/README.md).
+Release evidence is model- and commit-specific. The checked-in suite does not
+carry numbers from earlier versions or from a different model. Run the v0.8
+benchmarks, inspect every raw record, then publish a dated report with model,
+config hash, git commit, skipped workloads, and all failures in the denominator.
 
 ## Try the recovery story in 30 seconds
 
@@ -204,6 +190,8 @@ longer or queued work a durable handle. Tasks-aware clients can still use
 Retrying an expensive submission with the same
 `client_request_id` cannot launch a duplicate job. For parallel work, every
 client can use `wait_for_completions` regardless of MCP Tasks support.
+The normative identity, lifecycle, continuation, completion, Artifact, and
+compatibility contract is [Awaitless Agent Job Protocol](JOB_PROTOCOL.md).
 
 ### Codex plugin
 

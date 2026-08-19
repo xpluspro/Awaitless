@@ -91,6 +91,19 @@ class MCPServerTest(unittest.IsolatedAsyncioTestCase):
                         "list_queues",
                     },
                 )
+                descriptions = {tool.name: tool.description or "" for tool in tools.tools}
+                required_guidance = {
+                    "run": ("Default tool", "Do not use this tool for explicit"),
+                    "submit_job": ("asynchronous or fan-out", "Do not use this as the default"),
+                    "run_job": ("MCP Tasks compatibility", "Do not choose this for ordinary"),
+                    "wait_for_job": ("Wait once for a known job_id", "do not poll it repeatedly"),
+                    "wait_for_completions": ("multiple known jobs", "at-least-once"),
+                    "get_job_status": ("immediate, non-waiting", "Do not use this to wait"),
+                    "get_job_logs": ("failed or stalled", "Do not use as a progress stream"),
+                }
+                for name, phrases in required_guidance.items():
+                    for phrase in phrases:
+                        self.assertIn(phrase, descriptions[name], f"{name}: {phrase}")
                 created_queue = await session.call_tool(
                     "create_queue", {"name": "mcp-gpu", "concurrency": 1}
                 )

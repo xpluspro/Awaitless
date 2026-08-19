@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import posixpath
 import shlex
@@ -267,6 +268,23 @@ class SlurmBackend:
             modified_at=modified_at,
         )
 
+    def _remote_sha256(self, host: str, path: str) -> str:
+        """Hash a complete Artifact through the SFTP data channel."""
+        with tempfile.TemporaryDirectory(prefix="awaitless-sftp-artifact-") as temp:
+            local_path = Path(temp) / "artifact"
+            self._sftp(
+                host,
+                [
+                    f"@get -p {_sftp_quote(_sftp_path(path))} "
+                    f"{_sftp_quote(str(local_path))}"
+                ],
+            )
+            digest = hashlib.sha256()
+            with local_path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+
     def _slurm_options(self, host: str, spec: dict[str, Any]) -> list[str]:
         configured = self.settings.hosts.get(host, {}).get("slurm", {})
         if not isinstance(configured, dict):
@@ -522,6 +540,7 @@ exit $?
             }
             if is_file:
                 item["size_bytes"] = size
+                item["sha256"] = self._remote_sha256(job["host"], remote_path)
                 if declared.lower().endswith(".json") and size <= max_bytes:
                     remote = self._read_remote_file(job["host"], remote_path, max_bytes)
                     item["modified_at"] = remote.modified_at

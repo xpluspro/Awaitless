@@ -365,12 +365,12 @@ def run_workload(args: argparse.Namespace) -> int:
 def inference(args: argparse.Namespace) -> int:
     try:
         try:
-            from .run_agent import DeepSeekClient, LLMConfig
+            from .run_agent import LLMConfig, ModelClient
         except ImportError:
-            from run_agent import DeepSeekClient, LLMConfig  # type: ignore[no-redef]
+            from run_agent import LLMConfig, ModelClient  # type: ignore[no-redef]
 
         config = LLMConfig.load(args.env_file)
-        client = DeepSeekClient(config)
+        client = ModelClient(config)
         usages: list[dict[str, int]] = []
         hashes: list[str] = []
         for index in range(args.requests):

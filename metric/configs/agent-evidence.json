@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
-  "name": "deepseek-agent-evidence-v2",
+  "name": "agent-v0.8-evidence",
+  "expected_version": "0.8.0",
   "description": "Twenty paired fresh-session Agent trials with real API usage and a non-truncating completion budget.",
   "trials": 20,
   "seed": 20260810,

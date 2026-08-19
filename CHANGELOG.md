@@ -1,16 +1,16 @@
 # Changelog
 
-## 0.7.0 — 2026-08-19
-
-- Add immutable terminal result snapshots with SHA-256 metadata for replayable wait and completion results.
-- Make wait, completion drain, cancellation, timing, environment, resource, phase, heartbeat, and capture-log fields explicit and machine-readable.
-- Capture command-created redirected logs when paths are declared or detected in shell redirection, and preserve bounded tails in terminal results.
-- Add device/resource diagnostics, dependency/test/validation failure categories, and non-interactive environment snapshots.
-- Add `--capture-log`, `--resource`, `wait --progress-interval`, and `completions --drain` CLI paths.
-- Align plugin metadata and package version at 0.7.0.
-
 ## Unreleased
 
+## 0.8.0 — 2026-08-19
+
+- Define the v0.8 Agent Job Protocol in `JOB_PROTOCOL.md`, including normative
+  tool selection, identity, lifecycle, continuation, at-least-once completion,
+  Artifact manifest, error, and compatibility contracts.
+- Make every primary MCP job tool state both when to use it and when not to use
+  it, and identify `run_job` as the MCP Tasks compatibility entry point.
+- Include complete-file SHA-256 metadata for Slurm Artifacts, matching Local and
+  SSH manifest integrity semantics.
 - Clarify detached result delivery with `job_state`, `wait_state`, and
   `delivery_state`, and include a copyable `next_command` in detached output.
 - Add `awaitless wait --last` for recovering the most recently detached job and
@@ -24,6 +24,15 @@
   durable jobs, named queues, and completion recovery define the product first.
 - Harden the adaptive detach test for slower Python 3.14 startup by asserting
   output at the durable completion boundary instead of the 50 ms detach snapshot.
+
+## 0.7.0 — 2026-08-19
+
+- Add immutable terminal result snapshots with SHA-256 metadata for replayable wait and completion results.
+- Make wait, completion drain, cancellation, timing, environment, resource, phase, heartbeat, and capture-log fields explicit and machine-readable.
+- Capture command-created redirected logs when paths are declared or detected in shell redirection, and preserve bounded tails in terminal results.
+- Add device/resource diagnostics, dependency/test/validation failure categories, and non-interactive environment snapshots.
+- Add `--capture-log`, `--resource`, `wait --progress-interval`, and `completions --drain` CLI paths.
+- Align plugin metadata and package version at 0.7.0.
 
 ## 0.6.0 — 2026-08-18
 

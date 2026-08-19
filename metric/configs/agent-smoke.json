@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
-  "name": "deepseek-agent-smoke",
+  "name": "agent-v0.8-smoke",
+  "expected_version": "0.8.0",
   "description": "One paired recovery case for validating the live LLM experiment path with provider-default thinking.",
   "trials": 1,
   "seed": 20260810,

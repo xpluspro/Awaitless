@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "adaptive-spectrum-v0.8",
+  "description": "Real repository commands spanning quick inspection through the full test suite.",
+  "trials": 5,
+  "expected_version": "0.8.0",
+  "commands": [
+    {"id": "git-status", "argv": ["git", "status", "--short"], "expected_exit_code": 0},
+    {"id": "protocol-search", "argv": ["rg", "-n", "client_request_id", "JOB_PROTOCOL.md"], "expected_exit_code": 0},
+    {"id": "targeted-test", "argv": ["{python}", "-m", "pytest", "tests/test_util.py", "-q"], "expected_exit_code": 0},
+    {"id": "mcp-test", "argv": ["{python}", "-m", "pytest", "tests/test_mcp.py", "-q"], "expected_exit_code": 0},
+    {"id": "full-test", "argv": ["{python}", "-m", "pytest", "-q"], "expected_exit_code": 0}
+  ]
+}

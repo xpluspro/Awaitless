@@ -1,7 +1,7 @@
 # Awaitless reference guide
 
 This guide contains the technical detail intentionally kept out of the project
-README. It describes Awaitless 0.7.x as shipped by the `awaitless-runner`
+README. It describes Awaitless 0.8.x as shipped by the `awaitless-runner`
 distribution.
 
 ## Requirements and installation
@@ -494,6 +494,8 @@ isolated `/path/to/logs/<job-id>/` directory for each job.
 
 ## MCP tools and protocol
 
+The normative backend-independent contract is [Awaitless Agent Job Protocol](../JOB_PROTOCOL.md).
+
 Awaitless exposes `run`, `run_job`, `submit_job`, `wait_for_job`,
 `wait_for_completions`, `get_job_status`, `get_job_logs`, `cancel_job`,
 `list_jobs`, `create_queue`, and `list_queues` over stdio. `run` is the preferred
@@ -530,6 +532,7 @@ awaitless doctor --host zhiyuan --cwd /workspace/project \
   --user-group HwHiAiUser --source scripts/env.sh \
   --env ASCEND_INSTALL_ROOT=/usr/local/Ascend --queue --json
 awaitless submit-group --group tuning --host zhiyuan --devices 4,5,6,7 --artifact 'artifacts/*.json' -- ./run_benchmark.sh
+```
 
 `doctor` applies `--user-group`, `--source`, and `--env` in the same order as
 the SSH execution wrapper. Host entries may define reusable `user_group`,
@@ -537,6 +540,23 @@ the SSH execution wrapper. Host entries may define reusable `user_group`,
 profile. `--queue` additionally requires `flock`, matching remote queue
 submission. The JSON result includes the effective profile and individual
 group, source, toolchain, CANN, device, and `flock` checks.
+
+The v0.8 real-target acceptance runner persists the same checks plus queue,
+disconnect recovery, quiet-heartbeat, and Artifact manifest evidence:
+
+```bash
+python3 scripts/acceptance_v08_remote.py \
+  --host zhiyuan --cwd /workspace/project \
+  --source scripts/env.sh --user-group HwHiAiUser --devices 0 \
+  --env RSM_TOOLCHAIN_ROOT=/workspace/project/.venv \
+  --output assets/remote-acceptance-v0.8.json
+```
+
+It refuses to overwrite an existing artifact. Record the target, commit, and
+output path for each rerun; do not treat a skipped or failed doctor as remote
+acceptance.
+
+```bash
 awaitless wait-group tuning --json
 awaitless completions --group tuning --json
 awaitless logs <job-id> --tail 200 --json
@@ -568,10 +588,9 @@ in the benchmark documentation:
 - [Metric framework and reproduction guide](../metric/README.md)
 - [Metric definitions](../metric/METRICS.md)
 - [Fair-comparison protocol](../metric/PROTOCOL.md)
-- [DeepSeek Agent report](../metric/results/deepseek-agent-v2-report.md)
-- [SSH polling experiment](../benchmarks/README.md)
-- [SSH polling raw result](../benchmarks/results/polling-vs-awaitless.json)
-- [Multi-Job completion protocol result](../benchmarks/results/completion-feed.json)
+- [v0.8 evidence suite](../metric/README.md#v08-evidence-suite)
+- [Agent Job Protocol](../JOB_PROTOCOL.md)
+- [Remote acceptance artifact](../assets/remote-acceptance-v0.8.json)
 - [Blocking vs. Awaitless design](../metric/LONG_RUNNING.md)
 
 Returned log bytes are not token estimates. Agent usage-token claims are made

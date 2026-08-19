@@ -22,8 +22,9 @@
 
 ## 快速运行
 
-本地 smoke 会运行相同 workload 的三个方案：
+本地 smoke 会运行相同 workload 的四个方案：
 
+- `shell`：直接同步 shell；客户端中断时没有可恢复 Job identity；
 - `tmux_plain`：原生 `new-session`、`display-message`、`capture-pane`；
 - `tmux_wrapped`：带退出码、有限日志、Artifact 和阻塞等待的参考 wrapper；
 - `awaitless`：`submit`、`wait`、`cancel`。
@@ -43,7 +44,7 @@ smoke 只验证采集链路，不能用于宣传。准备对外结论时使用
 次，并另外运行真实 SSH 断线和真实 Agent usage 实验。登录节点上的任务必须保持为
 sleep 和少量 I/O；计算密集 workload 应由 Slurm 调度。
 
-## 真实 DeepSeek Agent 实验
+## v0.8 真实 Agent 实验
 
 [`run_agent.py`](run_agent.py) 使用同一个模型、system prompt、workload 和随机 seed，分别只
 暴露普通 tmux、增强 tmux 或 Awaitless 工具。提交后会丢弃第一阶段消息历史，第二个客户端只
@@ -55,7 +56,7 @@ sleep 和少量 I/O；计算密集 workload 应由 Slurm 调度。
 ```dotenv
 LLM_API_KEY=...
 LLM_BASE_URL=...
-LLM_MODEL=deepseek-v4-flash
+MODEL=gpt-5.6-luna
 LLM_TIMEOUT_SECONDS=60
 ```
 
@@ -64,27 +65,25 @@ LLM_TIMEOUT_SECONDS=60
 ```bash
 python3 metric/run_agent.py --config metric/configs/agent-smoke.json --preflight
 
-python3 metric/run_agent.py \
+python3 metric/run_agent.py --model gpt-5.6-luna \
   --config metric/configs/agent-smoke.json \
-  --output metric/results/raw/deepseek-agent-smoke.jsonl
+  --output metric/results/raw/agent-v0.8-smoke.jsonl
 
-python3 metric/run_agent.py \
+python3 metric/run_agent.py --model gpt-5.6-luna \
   --config metric/configs/agent-evidence.json \
-  --output metric/results/raw/deepseek-agent-evidence.jsonl
+  --output metric/results/raw/agent-v0.8-evidence.jsonl
 
-python3 metric/analyze.py metric/results/raw/deepseek-agent-evidence.jsonl \
-  --json-out metric/results/deepseek-agent-summary.json \
-  --markdown-out metric/results/deepseek-agent-summary.md
+python3 metric/analyze.py metric/results/raw/agent-v0.8-evidence.jsonl \
+  --json-out metric/results/agent-v0.8-summary.json \
+  --markdown-out metric/results/agent-v0.8-summary.md
 ```
 
-输出文件默认拒绝覆盖。DeepSeek thinking 模式的 `reasoning_content` 会按接口要求传回后续
+输出文件默认拒绝覆盖。兼容 OpenAI 的 thinking 模式 `reasoning_content` 会按接口要求传回后续
 请求，但不会写入实验记录；只保存 usage、finish reason、工具名和响应哈希。任何请求若以
 `finish_reason=length` 结束，分析器会明确把该批比较标为需要提高上限后重跑。
 
-2026-08-10 的 20×3 实测结果和限制见
-[`results/deepseek-agent-v2-report.md`](results/deepseek-agent-v2-report.md)。这批数据对普通
-tmux 显示每个正确任务的 usage token 减少 85.3%，但对增强 tmux 没有 token 优势；不能把
-前一个数字推广为所有任务的固定节省比例。
+正式发布只接受绑定 `gpt-5.6-luna`、配置 hash、git commit 和日期的新结果；历史模型结果不再
+作为 v0.8 证据。
 
 ## Blocking vs Awaitless 长任务 Benchmark
 
@@ -97,6 +96,40 @@ makespan、断线恢复和结果正确性。
 Agent 的独占工具槽被同步调用占用多久。1 秒 smoke 和 5 秒 demo 只验证采集链路；正式配置为
 60–180 秒、每格 20 次，并在运行前自动记录不可用 workload 的 skip 原因。
 
+## v0.8 Agent 选工具评测
+
+[`run_tool_selection.py`](run_tool_selection.py) 将 MCP server 实际发布的 tool schema 和
+description 交给模型，并在 20 个固定场景中用确定性工具响应评估路由。场景覆盖快速/长命令、
+显式异步、fan-out、断线和 waiter 恢复、即时状态、失败日志、幂等重试、completion cursor、
+Artifact 和 MCP Tasks。执行层不启动真实命令，因此这个 benchmark 测的是 Agent 协议选择，
+不是 backend 性能。
+
+```bash
+python3 metric/run_tool_selection.py \
+  --config metric/configs/tool-selection-v0.8.json \
+  --output metric/results/raw/tool-selection-v0.8.json
+```
+
+每个场景记录首次工具选择、完整调用序列和参数、无谓调用、错误轮询、重复提交、Artifact
+消费、usage token 和最终完成。发布门槛是首次选择正确率至少 95%，且所有标记为 recovery
+的场景没有重复提交。原始结果默认拒绝覆盖，必须连同模型标识和日期保存后才能发布结论。
+
+## v0.8 evidence suite
+
+v0.8 发布报告由四条独立证据组成，不合成单一总分：
+
+1. `tool-selection-v0.8.json`：20 个 Luna 协议选择场景，要求首次选择至少 95%、全部场景完成、
+   recovery 无重复提交，并核对每个响应模型都是 `gpt-5.6-luna`。
+2. `agent-v0.8.json`：真实 targeted pytest workload 的 fresh-session Agent recovery，对比原生
+   tmux、公开的强 tmux wrapper 与 Awaitless。
+3. `fault-matrix-v0.8.json`：shell、tmux、强 wrapper 与 Awaitless 的 normal、failure、
+   disconnect、large-log 和 process-tree cancellation 矩阵。
+4. `spectrum-v0.8.json`：从 `git status`、`rg` 到 targeted/full pytest 的真实命令，比较直接
+   shell 与 adaptive `run` 的正确性、inline/detached 边界和额外时延。
+
+所有 runner 必须记录 Awaitless 版本、源码路径、git commit、dirty 状态和配置 SHA-256。
+正式跑分前必须先构建并安装 0.8.0 wheel；不允许使用旧插件缓存或 0.7.x CLI 生成 v0.8 证据。
+
 ## 目录结构
 
 ```text
@@ -108,7 +141,8 @@ metric/
 ├── analyze.py                   # JSONL 校验、聚合、置信区间与 Markdown 报告
 ├── analyze_long_running.py      # 长任务 blocked/release/makespan 分析
 ├── long_workload.py             # cargo/pytest/docker/npm/inference 受控适配器
-├── run_agent.py                 # DeepSeek 工具调用、断线恢复与真实 API usage 实验
+├── run_agent.py                 # OpenAI-compatible 工具调用、断线恢复与真实 API usage 实验
+├── run_tool_selection.py        # v0.8 固定场景工具选择与恢复评测
 ├── run_long_running.py          # Blocking/并发 Blocking/Awaitless runner
 ├── run_local.py                 # 本地 tmux / 增强 tmux / Awaitless 实验
 ├── workload.py                  # 三组共用的确定性 workload
@@ -128,7 +162,6 @@ metric/
   失败，而是把比较转向恢复正确性、统一协议和免维护。
 - wrapper SLOC 只能说明用户自有维护面，不能证明运行时质量。
 - 只报告预先定义的场景、全部失败和置信区间；不挑选 Awaitless 获胜的 trial。
-- 当前 `benchmarks/polling_vs_awaitless.py` 的 13 → 2 调用和 85.5% 返回日志字节减少是
-  一次历史观测，不应改写成“节省 85.5% token”。
+- 旧 benchmark 结果已从发布文档和 CI 移除；不要把历史调用数或 token 数当作 v0.8 结论。
 - `run_agent.py` 的真实 usage 只代表记录的模型、提示、场景和日期。模型版本、缓存策略、
   thinking 模式或任务时长改变后必须重测。

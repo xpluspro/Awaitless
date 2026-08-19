@@ -176,10 +176,12 @@ class SlurmBackendTest(unittest.TestCase):
         with (
             patch.object(self.backend, "_remote_stat", return_value=(True, 11)),
             patch.object(self.backend, "_read_remote_file", side_effect=read_remote),
+            patch.object(self.backend, "_remote_sha256", return_value="a" * 64),
         ):
             artifacts = self.service.artifacts(self.service.require("job_FILES"))
         self.assertEqual(artifacts[0]["content"], {"ok": True})
         self.assertEqual(artifacts[0]["size_bytes"], 11)
+        self.assertEqual(artifacts[0]["sha256"], "a" * 64)
 
     def test_scheduler_command_allowlist_is_enforced_before_ssh(self) -> None:
         with self.assertRaisesRegex(ValueError, "allowlisted"):

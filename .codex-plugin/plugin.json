@@ -1,6 +1,6 @@
 {
   "name": "awaitless",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Durable local, SSH, and Slurm command execution for coding agents.",
   "author": {
     "name": "Awaitless contributors",

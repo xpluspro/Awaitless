@@ -116,12 +116,13 @@ server = MCPServer(
         "local, SSH, and Slurm"
     ),
     instructions=(
-        "Use run as the default for non-interactive commands: quick work returns inline, "
-        "while longer work automatically returns a durable Job handle. "
-        "For MCP Tasks clients that explicitly need a Task handle, call run_job with a "
-        "stable client_request_id. Low-level clients can use submit_job plus wait_for_job. "
-        "For multiple independent jobs, use wait_for_completions and advance its "
-        "durable cursor only after processing each batch. "
+        "Tool choice: use run by default when starting one non-interactive command, "
+        "regardless of uncertain duration. Use submit_job only for explicit asynchronous "
+        "submission or fan-out. Use run_job only when an MCP Tasks client explicitly "
+        "needs a Task handle. For an existing job_id, never submit again: use wait_for_job "
+        "to consume one result, get_job_status for one immediate non-waiting snapshot, or "
+        "get_job_logs for bounded failure diagnostics. For multiple submitted jobs, use "
+        "wait_for_completions and advance its durable cursor only after processing each batch. "
         "A client disconnect never cancels the submitted job. Use a preconfigured "
         "named queue when work must wait for scarce local or SSH capacity."
     ),
@@ -148,12 +149,18 @@ def run(
     capture_logs: list[str] | None = None,
     resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Run a non-interactive command through Awaitless's adaptive execution path.
+    """Default tool for starting one non-interactive command of uncertain duration.
 
     Every command is a durable Job from launch. Commands that finish within the
     inline timeout return their ordinary bounded result. Longer or queued work
     returns a detached Job handle without cancelling the workload. Omit queue to
     use an operator-configured default queue for the selected target.
+
+    Do not use this tool for explicit fire-and-forget or batch fan-out; use
+    submit_job. Do not use it when an MCP Tasks handle is explicitly required;
+    use run_job. Do not use it to resume an existing job_id; wait for or inspect
+    that job instead. If a detached handle is returned, keep its job_id and call
+    wait_for_job once when the result is needed rather than polling status.
     """
     with _service() as service:
         selected_inline_timeout = (
@@ -206,7 +213,7 @@ def submit_job(
     capture_logs: list[str] | None = None,
     resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Submit a durable job and return its stable ID without waiting.
+    """Explicitly submit one asynchronous or fan-out job without waiting.
 
     Omitted backend and host values use the Awaitless configuration defaults.
     Reuse client_request_id only when retrying the same logical submission; an
@@ -214,6 +221,12 @@ def submit_job(
     A named queue provides FIFO, non-preemptive admission for local or SSH work.
     Slurm options may contain account, constraint, cpus_per_task, gres, mem,
     nodes, ntasks, partition, qos, or time. Cluster config supplies defaults.
+
+    Do not use this as the default for a single command with uncertain duration;
+    use run. Do not use it for MCP Tasks creation; use run_job. Do not resubmit
+    merely because a client disconnected or a wait timed out: keep the original
+    job_id, or retry the identical logical submission with the same
+    client_request_id if the creation response was lost.
     """
     with _service() as service:
         return _submit_with_service(
@@ -253,11 +266,15 @@ def run_job(
     capture_logs: list[str] | None = None,
     resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Run one durable job.
+    """MCP Tasks compatibility entry point for explicitly creating a Task handle.
 
     A client declaring io.modelcontextprotocol/tasks receives a Task handle
     immediately. Older clients block and receive the ordinary final tool result.
     The stable client_request_id makes a lost creation response safe to retry.
+
+    Do not choose this for ordinary command execution: use run. Do not choose it
+    for generic asynchronous submission or fan-out: use submit_job. Only retry a
+    lost Task creation with the same client_request_id and identical arguments.
     """
     with _service() as service:
         submitted = _submit_with_service(
@@ -284,7 +301,13 @@ def run_job(
 
 @server.tool()
 def wait_for_job(job_id: str, timeout_seconds: float | None = None) -> dict[str, Any]:
-    """Wait for a durable job and return state, exit code, bounded logs, and Artifacts."""
+    """Wait once for a known job_id and consume its durable terminal result.
+
+    Returns state, exit code, bounded logs, and declared Artifacts. A client-side
+    timeout or disconnect does not cancel the Job; call this tool again later with
+    the same job_id. Do not use it to start work, do not poll it repeatedly, and
+    use wait_for_completions instead when collecting several independent Jobs.
+    """
     with _service() as service:
         result, _ = service.wait(job_id, timeout_seconds)
         return result
@@ -297,12 +320,17 @@ def wait_for_completions(
     timeout_seconds: float | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Return durable terminal results across multiple jobs after a cursor.
+    """Collect durable terminal results across multiple known jobs after a cursor.
 
     Existing completions return immediately. Otherwise the call waits until at
     least one selected job completes or the optional call-level timeout expires.
     Reusing the same cursor replays results; advancing to next_cursor consumes
     the returned batch. A timeout never cancels a managed job.
+
+    Submit all independent jobs before calling this tool. Treat delivery as
+    at-least-once: process and deduplicate by completion_id before advancing the
+    cursor. Do not use this for one job, do not poll get_job_status between
+    continuation calls, and never resubmit active jobs after a waiter disconnects.
     """
     with _service() as service:
         return service.completions(
@@ -315,7 +343,12 @@ def wait_for_completions(
 
 @server.tool()
 def get_job_status(job_id: str) -> dict[str, Any]:
-    """Get the latest durable state for one job."""
+    """Get one immediate, non-waiting state snapshot for a known job_id.
+
+    Use only when the caller needs current status now. Do not use this to wait for
+    completion or build a polling loop; use wait_for_job for one Job or
+    wait_for_completions for several. This tool never starts or retries work.
+    """
     with _service() as service:
         return service.status(job_id)
 
@@ -324,7 +357,13 @@ def get_job_status(job_id: str) -> dict[str, Any]:
 def get_job_logs(
     job_id: str, tail: int | None = None, max_bytes: int | None = None
 ) -> dict[str, Any]:
-    """Return bounded stdout and stderr tails for one job."""
+    """Inspect bounded stdout and stderr tails for a known failed or stalled job.
+
+    Use after a terminal wait reports failure, timeout, stall, or loss and its
+    bounded result needs focused diagnostics. Do not use as a progress stream,
+    do not repeatedly tail a running healthy Job, and do not use it instead of
+    wait_for_job to learn that work completed.
+    """
     with _service() as service:
         selected_tail = service.settings.log_tail_lines if tail is None else tail
         selected_bytes = (

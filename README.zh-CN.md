@@ -121,29 +121,14 @@ awaitless completions job_A job_B job_C --after cmp_... --json
 消失后，新 session 可以从保存的 cursor 继续。Awaitless 负责让 continuation result 持久
 可用，但不会替 Agent 执行下一步推理，也不要求常驻通知服务。
 
-在仓库内可复现的三 Job 确定性协议案例中，逐 Job polling 与取回结果用了 13 次 Agent 可见
-CLI 调用，completion feed 使用 6 次。它是协议 benchmark，不代表模型或 token 结论。参见
-[方法和原始结果](benchmarks/README.md#multi-job-completion-benchmark)。
+v0.8 不再把历史上的调用次数 demo 当作发布证据，而是回答四个问题：Agent 是否选对协议、
+故障后是否无重复启动地恢复、执行管理状态是否从 reasoning loop 中移走，以及短命令是否仍由
+adaptive `run` 低摩擦地完成。参见 [v0.8 证据计划](metric/README.md#v08-evidence-suite)。
 
-## 真实 Agent 工作负载实测
+## v0.8 证据状态
 
-这些结果说明一套有人维护的执行协议为什么有用；减少工具调用和 token 是证据，不是产品品类。
-
-| 结果 | 普通 tmux / 轮询 | Awaitless |
-|---|---:|---:|
-| 20 个配对 Agent 案例的中位工具调用 | 7 | **2（减少 71.4%）** |
-| 每个正确任务的 API usage token | 25,974.2 | **3,820.8（减少 85.3%）** |
-| 一次真实 SSH 轮询任务的 Agent 可见调用 | 13 | **2** |
-
-Agent 实验于 2026-08-10 使用相同的 DeepSeek 模型、提示词、工作负载和随机 seed。
-Awaitless 在 20/20 个案例中都正确返回了状态、退出码、Artifact 和日志契约；其中一次
-模型最终回复为空，因此严格端到端得分为 19/20。一个 319 行的增强 tmux wrapper
-也做到了两次调用，并比 Awaitless 少用 9.2% token——面对这条强基线，Awaitless
-的价值是内置且有人维护的统一协议，而不是声称永远更省 token。
-
-查看[完整 Agent 报告](metric/results/deepseek-agent-v2-report.md)、
-[benchmark 方法论](metric/README.md)，以及另一项带原始结果的
-[SSH 轮询实验](benchmarks/README.md)。
+发布证据必须绑定模型、配置 hash、git commit 和日期。仓库不再把旧版本或其他模型的数字
+留在首页；运行 v0.8 benchmark 后，保留所有 raw record、失败样本和跳过原因，再发布汇总。
 
 ## 30 秒体验断线恢复
 
@@ -198,6 +183,8 @@ handle。支持 MCP Tasks 的客户端仍可使用 `run_job`，低层客户端�
 和 `wait_for_job`。昂贵任务使用相同
 `client_request_id` 重试时不会重复启动。并行任务可以通过 `wait_for_completions` 统一消费，
 无论客户端是否支持 MCP Tasks。
+规范化的 identity、生命周期、继续执行、completion、Artifact 与兼容性契约见
+[Awaitless Agent Job Protocol](JOB_PROTOCOL.md)。
 
 ### Codex 插件
 
@@ -270,7 +257,7 @@ Awaitless 没有 daemon、HTTP 服务或托管 sandbox。每次调用打开同�
 - [文档索引](docs/README.md)
 - [产品定位与演进原则](docs/PRD.zh-CN.md)
 - [v0.6 Adaptive Run 实现说明](docs/v0.6.zh-CN.md)
-- [v0.7 Immutable Completion Snapshots 计划](docs/v0.7.zh-CN.md)
+- [v0.7 Immutable Completion Snapshots](docs/v0.7.zh-CN.md)
 - [v0.5 Durable Completion Feed 实现说明](docs/v0.5.zh-CN.md)
 - [CLI、配置、SSH、Slurm、持久化、Artifact 与故障排查](docs/REFERENCE.md)
 - [MCP Tasks 协议与兼容性](docs/MCP_TASKS.md)

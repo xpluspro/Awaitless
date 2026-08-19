@@ -17,6 +17,7 @@ from metric import (
     run_agent,
     run_local,
     run_long_running,
+    run_tool_selection,
 )
 
 
@@ -44,6 +45,47 @@ def metric_config(*, arm: str, scenario: str) -> dict[str, object]:
             }
         },
     }
+
+
+class ToolSelectionMetricTest(unittest.TestCase):
+    def test_v08_suite_has_twenty_valid_fixed_scenarios(self) -> None:
+        config = json.loads(
+            (ROOT / "metric" / "configs" / "tool-selection-v0.8.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        run_tool_selection.validate_config(config)
+        self.assertEqual(len(config["scenarios"]), 20)
+        self.assertEqual(
+            {scenario["expected_calls"][0] for scenario in config["scenarios"]},
+            run_tool_selection.JOB_TOOLS,
+        )
+
+    def test_tool_selection_scores_polling_duplicate_and_artifact_contract(self) -> None:
+        scenario = {
+            "id": "fixture",
+            "tags": ["recovery"],
+            "expected_calls": ["wait_for_job"],
+            "expected_arguments": [{"job_id": "job_1"}],
+            "final_contains": {"artifact_sha256": "a" * 64},
+        }
+        usage = run_agent.LLMUsage()
+        record = run_tool_selection.score_record(
+            scenario,
+            [
+                {"name": "get_job_status", "arguments": {"job_id": "job_1"}},
+                {"name": "submit_job", "arguments": {"command": ["again"]}},
+                {"name": "wait_for_job", "arguments": {"job_id": "job_1"}},
+            ],
+            {"artifact_sha256": "wrong"},
+            usage,
+            None,
+        )
+        self.assertFalse(record["metrics"]["first_tool_correct"])
+        self.assertTrue(record["metrics"]["incorrect_polling"])
+        self.assertTrue(record["metrics"]["duplicate_submission"])
+        self.assertFalse(record["metrics"]["artifact_consumed"])
+        self.assertFalse(record["metrics"]["final_task_completed"])
 
 
 class MetricWorkloadTest(unittest.TestCase):
@@ -123,6 +165,41 @@ class MetricWorkloadTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "different seeds or expected workloads"):
                 analyze.build_summary([output], [records[0], mismatched])
 
+    def test_shell_recovery_is_recorded_as_lost_without_relaunch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = metric_config(arm="shell", scenario="recovery")
+            config["expected_version"] = __version__
+            config_path = root / "config.json"
+            output = root / "trials.jsonl"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            self.assertEqual(
+                run_local.main(["--config", str(config_path), "--output", str(output)]),
+                0,
+            )
+            record = analyze.load_records([output])[0]
+            self.assertEqual(record["observed"]["state"], "lost")
+            self.assertTrue(record["observed"]["recovery_injected"])
+            self.assertFalse(record["metrics"]["recovery_success"])
+            self.assertFalse(record["metrics"]["duplicate_launch"])
+
+    def test_pre_command_controls_real_workload_exit_code(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact = Path(temporary) / "result.json"
+            result = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "metric" / "workload.py"),
+                    "--scenario", "normal", "--trial-id", "pre-command",
+                    "--duration-seconds", "0", "--line-count", "0",
+                    "--line-bytes", "64", "--exit-code", "0", "--marker", "pre",
+                    "--score", "1", "--artifact", str(artifact),
+                    "--pre-command-json", json.dumps([sys.executable, "-c", "raise SystemExit(7)"]),
+                ],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=5,
+            )
+            self.assertEqual(result.returncode, 7)
+            self.assertFalse(json.loads(artifact.read_text(encoding="utf-8"))["ok"])
+
     @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
     def test_wrapped_tmux_recovers_after_interrupted_waiter(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -178,6 +255,16 @@ class MetricWorkloadTest(unittest.TestCase):
                 "score": 1,
             },
         )
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text(
+                "API_KEY=alias-key\nBASE_URL=https://example.test/v1\n",
+                encoding="utf-8",
+            )
+            config = run_agent.LLMConfig.load(env_file)
+            self.assertEqual(config.api_key, "alias-key")
+            self.assertEqual(config.base_url, "https://example.test/v1")
+            self.assertEqual(config.model, "gpt-5.6-luna")
         self.assertIsNone(run_agent.parse_final_answer(""))
         observation = run_agent.ManagerObservation(log_snapshot_bytes=[10, 20, 30])
         self.assertEqual(observation.duplicated_log_bytes, 30)

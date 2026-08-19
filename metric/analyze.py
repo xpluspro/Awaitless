@@ -22,6 +22,7 @@ RATE_FIELDS = (
     "log_contract_correct",
     "recovery_success",
     "cancel_cleanup_success",
+    "duplicate_launch",
 )
 NUMBER_FIELDS = (
     "agent_tool_calls",
@@ -82,7 +83,7 @@ def validate_record(record: dict[str, Any], source: str) -> None:
         raise ValueError(f"{source}: unsupported schema or record type")
     if isinstance(record.get("seed"), bool) or not isinstance(record.get("seed"), int):
         raise ValueError(f"{source}: seed must be an integer")
-    if record["arm"] not in {"tmux_plain", "tmux_wrapped", "awaitless"}:
+    if record["arm"] not in {"shell", "tmux_plain", "tmux_wrapped", "awaitless"}:
         raise ValueError(f"{source}: unknown arm {record['arm']!r}")
     metrics = record["metrics"]
     for name in RATE_FIELDS:
@@ -260,7 +261,7 @@ def comparisons(scopes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         reference = arms.get("awaitless")
         if reference is None:
             continue
-        for baseline_name in ("tmux_plain", "tmux_wrapped"):
+        for baseline_name in ("shell", "tmux_plain", "tmux_wrapped"):
             baseline = arms.get(baseline_name)
             if baseline is None:
                 continue
@@ -409,8 +410,8 @@ def markdown(summary: dict[str, Any]) -> str:
         "",
         "## Overall",
         "",
-        "| Arm | Result fidelity | Recovery | Cancel cleanup | Median calls | P90 visible bytes | Calls / correct job | Usage tokens / correct job | Custom glue SLOC |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Arm | Result fidelity | Recovery | Duplicate launch | Cancel cleanup | Median calls | P90 visible bytes | Calls / correct job | Usage tokens / correct job | Custom glue SLOC |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for arm, value in summary["overall"].items():
         lines.append(
@@ -420,6 +421,7 @@ def markdown(summary: dict[str, Any]) -> str:
                     arm,
                     rate_cell(value["rates"]["result_correct"]),
                     rate_cell(value["rates"]["recovery_success"]),
+                    rate_cell(value["rates"]["duplicate_launch"]),
                     rate_cell(value["rates"]["cancel_cleanup_success"]),
                     number(value["distributions"]["agent_tool_calls"]["median"]),
                     bytes_text(value["distributions"]["agent_visible_bytes"]["p90"]),

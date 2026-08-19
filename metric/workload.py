@@ -86,6 +86,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--pid-file", type=Path)
     result.add_argument("--tree-child", action="store_true", help=argparse.SUPPRESS)
     result.add_argument("--parent-pid", type=int, help=argparse.SUPPRESS)
+    result.add_argument("--pre-command-json")
+    result.add_argument("--pre-cwd", type=Path)
     return result
 
 
@@ -102,6 +104,26 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("cancel_tree requires --pid-file")
         return _cancel_tree(args.pid_file, args.duration_seconds)
 
+    actual_exit_code = args.exit_code
+    if args.pre_command_json:
+        command = json.loads(args.pre_command_json)
+        if not isinstance(command, list) or not command or not all(
+            isinstance(item, str) for item in command
+        ):
+            raise SystemExit("pre-command must be a non-empty JSON string array")
+        completed = subprocess.run(
+            command,
+            cwd=args.pre_cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        sys.stdout.buffer.write(completed.stdout)
+        sys.stdout.buffer.flush()
+        sys.stderr.buffer.write(completed.stderr)
+        sys.stderr.buffer.flush()
+        actual_exit_code = completed.returncode
     _write_logs(args.line_count, args.line_bytes, args.duration_seconds)
     stdout_marker = f"FINAL_MARKER={args.marker}\n"
     stderr_marker = f"STDERR_MARKER={args.marker}\n"
@@ -113,13 +135,13 @@ def main(argv: list[str] | None = None) -> int:
         _write_artifact(
             args.artifact,
             {
-                "ok": args.exit_code == 0,
+                "ok": actual_exit_code == 0,
                 "scenario": args.scenario,
                 "trial_id": args.trial_id,
                 "score": args.score,
             },
         )
-    return args.exit_code
+    return actual_exit_code
 
 
 if __name__ == "__main__":

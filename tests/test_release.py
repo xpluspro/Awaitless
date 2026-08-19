@@ -36,6 +36,12 @@ class ReleaseMetadataTest(unittest.TestCase):
         self.assertEqual(plugin["name"], "awaitless")
         self.assertEqual(plugin["skills"], "./skills/")
         self.assertEqual(plugin["mcpServers"], "./.mcp.json")
+        skill = (ROOT / "skills" / "awaitless" / "SKILL.md").read_text(encoding="utf-8")
+        for tool in (
+            "run", "submit_job", "run_job", "wait_for_job", "get_job_status",
+            "get_job_logs", "wait_for_completions",
+        ):
+            self.assertIn(f"`{tool}`", skill)
         self.assertEqual(
             plugin_mcp["mcpServers"]["awaitless"],
             {"command": "uvx", "args": ["awaitless-runner"]},

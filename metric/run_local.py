@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a randomized local tmux/plain, tmux/wrapped, and Awaitless comparison."""
+"""Run a randomized shell, tmux, wrapped tmux, and Awaitless comparison."""
 
 from __future__ import annotations
 
@@ -28,8 +28,14 @@ ROOT = Path(__file__).resolve().parents[1]
 METRIC_ROOT = Path(__file__).resolve().parent
 WORKLOAD = METRIC_ROOT / "workload.py"
 TMUX_WRAPPER = METRIC_ROOT / "baselines" / "tmux_job.py"
-ARMS = {"tmux_plain", "tmux_wrapped", "awaitless"}
+ARMS = {"shell", "tmux_plain", "tmux_wrapped", "awaitless"}
 SCENARIOS = {"normal", "failure", "large_log", "recovery", "cancel_tree"}
+
+
+def source_version() -> str:
+    version_text = (ROOT / "src" / "awaitless" / "__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'__version__\s*=\s*"([^"]+)"', version_text)
+    return match.group(1) if match else "unknown"
 
 
 def utc_now() -> str:
@@ -194,6 +200,8 @@ class ScenarioSpec:
     marker: str
     score: float
     case_id: str
+    pre_command: tuple[str, ...] = ()
+    pre_cwd: str | None = None
 
     @property
     def expected_state(self) -> str:
@@ -255,6 +263,10 @@ class ScenarioSpec:
             command += ["--pid-file", str(work / "tree-pids.json")]
         else:
             command += ["--artifact", str(work / "result.json")]
+        if self.pre_command:
+            command += ["--pre-command-json", json.dumps(list(self.pre_command))]
+        if self.pre_cwd:
+            command += ["--pre-cwd", self.pre_cwd]
         return command
 
 
@@ -319,6 +331,71 @@ def source_sloc(path: Path) -> int:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
+
+
+class ShellArm:
+    metadata = {
+        "custom_glue_sloc": 0,
+        "custom_glue_files": 0,
+        "supported_backends": ["local"],
+    }
+
+    def __init__(
+        self,
+        recorder: Recorder,
+        spec: ScenarioSpec,
+        work: Path,
+        config: dict[str, Any],
+    ):
+        self.recorder = recorder
+        self.spec = spec
+        self.work = work
+        self.config = config
+
+    def run(self) -> ArmObservation:
+        command = self.spec.command(self.work)
+        if self.spec.name == "recovery":
+            interrupted = self.recorder.interrupted_command(
+                "run_interrupted",
+                command,
+                after_seconds=float(self.config["wait_interrupt_after_seconds"]),
+                cwd=self.work,
+            )
+            return ArmObservation(
+                state="lost" if interrupted else None,
+                recovery_injected=interrupted,
+            )
+        if self.spec.name == "cancel_tree":
+            interrupted = self.recorder.interrupted_command(
+                "cancel",
+                command,
+                after_seconds=self.spec.cancel_after_seconds,
+                cwd=self.work,
+            )
+            snapshot = process_snapshot(self.work / "tree-pids.json")
+            return ArmObservation(
+                state="cancelled" if interrupted else None,
+                orphan_processes=remaining_processes(snapshot),
+            )
+        result = self.recorder.command(
+            "run",
+            command,
+            cwd=self.work,
+            timeout=max(180.0, self.spec.duration_seconds + 30),
+        )
+        artifact_result = self.recorder.command(
+            "read_artifact", ["cat", "--", str(self.work / "result.json")]
+        )
+        return ArmObservation(
+            state="succeeded" if result.returncode == 0 else "failed",
+            exit_code=result.returncode,
+            artifact=json_stdout(artifact_result),
+            log_text=(result.stdout + result.stderr).decode("utf-8", errors="replace"),
+            truncated=False,
+        )
+
+    def cleanup(self) -> None:
+        return None
 
 
 class PlainTmuxArm:
@@ -710,6 +787,13 @@ def sample_spec(
     rng: random.Random,
 ) -> ScenarioSpec:
     marker = hashlib.sha256(f"{case_id}:{rng.random()}".encode()).hexdigest()[:20]
+    replacements = {"{python}": sys.executable, "{workspace}": str(ROOT)}
+    pre_command = tuple(
+        replacements.get(str(item), str(item)) for item in raw.get("pre_command", [])
+    )
+    pre_cwd = raw.get("pre_cwd")
+    if pre_cwd in replacements:
+        pre_cwd = replacements[pre_cwd]
     return ScenarioSpec(
         name=scenario,
         duration_seconds=float(sample_value(raw["duration_seconds"], rng)),
@@ -720,11 +804,16 @@ def sample_spec(
         marker=marker,
         score=round(rng.uniform(0, 100), 6),
         case_id=case_id,
+        pre_command=pre_command,
+        pre_cwd=str(pre_cwd) if pre_cwd else None,
     )
 
 
-def arm_class(name: str) -> type[PlainTmuxArm] | type[WrappedTmuxArm] | type[AwaitlessArm]:
+def arm_class(
+    name: str,
+) -> type[ShellArm] | type[PlainTmuxArm] | type[WrappedTmuxArm] | type[AwaitlessArm]:
     return {
+        "shell": ShellArm,
         "tmux_plain": PlainTmuxArm,
         "tmux_wrapped": WrappedTmuxArm,
         "awaitless": AwaitlessArm,
@@ -771,9 +860,7 @@ def base_environment(config_path: Path, config: dict[str, Any]) -> dict[str, Any
     )
     commit = execute(["git", "rev-parse", "HEAD"], timeout=5).stdout.decode().strip()
     git_status = execute(["git", "status", "--porcelain"], timeout=5)
-    version_text = (ROOT / "src" / "awaitless" / "__init__.py").read_text(encoding="utf-8")
-    version_match = re.search(r'__version__\s*=\s*"([^"]+)"', version_text)
-    version = version_match.group(1) if version_match else "unknown"
+    version = source_version()
     effective_config = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
     return {
         "profile": config["name"],
@@ -792,6 +879,7 @@ def base_environment(config_path: Path, config: dict[str, Any]) -> dict[str, Any
         "python_version": platform.python_version(),
         "tmux_version": tmux_version,
         "awaitless_version": version,
+        "awaitless_source": str((ROOT / "src" / "awaitless").resolve()),
         "backend": "local",
         "system_invocation_scope": "harness-visible commands plus self-instrumented tmux wrapper control calls",
     }
@@ -864,6 +952,10 @@ def build_record(
             "log_contract_correct": assessed["log_contract_correct"],
             "recovery_success": assessed["recovery_success"],
             "cancel_cleanup_success": assessed["cancel_cleanup_success"],
+            "duplicate_launch": sum(
+                event["operation"] in {"run", "run_interrupted", "submit"}
+                for event in recorder.events
+            ) > 1,
             "agent_tool_calls": recorder.agent_calls,
             "agent_visible_bytes": recorder.visible_bytes,
             "system_command_invocations": recorder.system_commands + observation.system_command_adjustment,
@@ -894,6 +986,11 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"arms must be selected from {sorted(ARMS)}")
     if not config.get("scenarios") or not set(config["scenarios"]).issubset(SCENARIOS):
         raise ValueError(f"scenarios must be selected from {sorted(SCENARIOS)}")
+    expected_version = config.get("expected_version")
+    if expected_version is not None and expected_version != source_version():
+        raise ValueError(
+            f"benchmark requires Awaitless {expected_version}; source is {source_version()}"
+        )
     for key in ("poll_interval_seconds", "wait_interrupt_after_seconds", "log_tail_lines", "max_return_bytes"):
         if float(config[key]) <= 0:
             raise ValueError(f"{key} must be positive")

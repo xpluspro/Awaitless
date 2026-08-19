@@ -14,6 +14,23 @@ description: Run non-interactive builds, tests, benchmarks, and local, SSH, or S
   they will cross a duration threshold; adaptive run handles that boundary.
 - Use the appropriate scheduler rather than Awaitless local/SSH when a cluster requires one.
 
+## Route MCP tools
+
+Use exactly one entry from this table. Do not treat tool names as synonyms.
+
+| Situation | Use | Do not use |
+|---|---|---|
+| One default command with unknown duration | `run` | `submit_job` or `run_job` |
+| Explicit asynchronous submission or independent fan-out | `submit_job` | `run` as a batch coordinator |
+| A Tasks-capable MCP client explicitly creates a Task | `run_job` | ordinary command execution |
+| Consume one known Job's terminal result | `wait_for_job` | status polling or a new submission |
+| Read one immediate state snapshot without waiting | `get_job_status` | repeated completion polling |
+| Inspect bounded diagnostics after failure or stall | `get_job_logs` | progress streaming or completion detection |
+| Collect terminal results from several known Jobs | `wait_for_completions` | serial per-Job waits |
+
+After any disconnect or client timeout, reuse the original `job_id` or completion
+cursor. Never submit a replacement merely because the waiter disappeared.
+
 ## Run adaptively
 
 1. Run the command and request JSON:

@@ -6,6 +6,8 @@ and implementation details.
 
 ## Start here
 
+- [Agent Job Protocol](../JOB_PROTOCOL.md) — normative identity, lifecycle,
+  continuation, completion, Artifact, error, and compatibility contracts.
 - [Reference guide](REFERENCE.md) — installation, CLI, configuration, SSH,
   Slurm, persistence, recovery, Artifacts, cancellation, troubleshooting, and
   architecture.
@@ -13,17 +15,13 @@ and implementation details.
   cancellation, TTL, reconnect behavior, and migration from legacy tools.
 - [Benchmark methodology](../metric/README.md) — metric definitions, controlled
   comparisons, reproducibility requirements, and reporting boundaries.
-- [DeepSeek Agent report](../metric/results/deepseek-agent-v2-report.md) — the
-  checked-in 20-case comparison behind the README headline numbers.
-- [SSH polling experiment](../benchmarks/README.md) — method and raw-result link
-  for the 13-to-2 agent-visible call comparison.
-- [Multi-Job completion benchmark](../benchmarks/README.md#multi-job-completion-benchmark)
-  — deterministic v0.5 protocol case and raw-result link.
+- [v0.8 evidence suite](../metric/README.md#v08-evidence-suite) — tool routing,
+  fault recovery, execution-management complexity, and workload spectrum.
 
 ## Product and design records
 
 - [Product positioning and evolution principles](PRD.zh-CN.md)
-- [v0.7 immutable completion snapshots — planned](v0.7.zh-CN.md)
+- [v0.7 immutable completion snapshots](v0.7.zh-CN.md)
 - [v0.6 adaptive run](v0.6.zh-CN.md)
 - [v0.5 durable completion feed](v0.5.zh-CN.md)
 - [v0.4 queue release and real-machine acceptance](v0.4.zh-CN.md)
