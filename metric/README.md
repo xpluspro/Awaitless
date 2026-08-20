@@ -96,6 +96,36 @@ makespan、断线恢复和结果正确性。
 Agent 的独占工具槽被同步调用占用多久。1 秒 smoke 和 5 秒 demo 只验证采集链路；正式配置为
 60–180 秒、每格 20 次，并在运行前自动记录不可用 workload 的 skip 原因。
 
+## 替代成本审计
+
+[`run_substitution_cost.py`](run_substitution_cost.py) 把强 tmux wrapper 与 Awaitless 的能力声明
+绑定到具体实现模式和测试文件。声明为支持的能力如果缺少任一类证据，审计会直接失败。报告将
+用户必须维护的 `consumer_glue_sloc` 与产品自身的 `product_implementation_sloc` 分开，避免把
+Awaitless 的零用户 glue 误写成零系统复杂度。
+
+```bash
+python3 metric/run_substitution_cost.py \
+  --config metric/configs/substitution-cost-v0.8.json \
+  --json-out metric/results/substitution-cost-v0.8.json \
+  --markdown-out metric/results/substitution-cost-v0.8.md
+```
+
+这是静态维护面审计，不替代 fault matrix、真实 Agent usage 或 SSH/CANN 验收。它只回答当前
+checked-in 强 wrapper 已经实现了什么，以及要覆盖 Local / SSH / Slurm 完整协议还缺哪些能力。
+
+扩展 wrapper 的真实 SSH/CANN 验收单独运行，远端没有 Slurm 时不得把通过误写成 Slurm 验收：
+
+```bash
+python3 scripts/acceptance_tmux_wrapper_remote.py \
+  --host zhiyuan --project /workspace/project \
+  --cann-source /workspace/project/.local/Ascend/cann-8.5.0/set_env.sh \
+  --device 0 --output metric/results/tmux-wrapper-remote-acceptance.json
+```
+
+历史 v0.8 Agent 与 fault matrix 使用的是 319 SLOC 原始 wrapper；扩展后的 517 SLOC 版本只有当前
+单元测试、local smoke 与真实 SSH/CANN 验收。在重新跑完 20-trial 正式矩阵前，不得把历史运行时
+数字归到扩展版本上。
+
 ## v0.8 Agent 选工具评测
 
 [`run_tool_selection.py`](run_tool_selection.py) 将 MCP server 实际发布的 tool schema 和

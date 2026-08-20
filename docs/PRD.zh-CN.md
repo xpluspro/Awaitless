@@ -1,10 +1,15 @@
 # Awaitless：面向 Coding Agents 的持久化执行层
 
-状态：Current
+状态：Maintenance mode / Frozen scope（历史产品假设记录）
 
-产品基线：v0.6.0
+产品基线：v0.8.0
 
-更新日期：2026-08-18
+更新日期：2026-08-20
+
+> 本文记录 Awaitless 最初的产品假设、设计原则与演进过程。当前项目已停止主动产品化，
+> 保留为轻量 OSS / 系统工程项目；不会继续为了扩张而增加 dashboard、托管服务、权限系统
+> 或更多 backend。未来工作只接受来自真实用户、反复出现且可验证的需求，具体边界见
+> [ROADMAP.md](../ROADMAP.md)。
 
 > **Awaitless is an adaptive durable execution layer for coding agents.**
 

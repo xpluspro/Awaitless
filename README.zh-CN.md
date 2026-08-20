@@ -4,15 +4,22 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**面向 Coding Agents 的自适应持久化执行层。**
+**面向 Coding Agent 的轻量持久化远程任务执行：支持 Local / SSH / Slurm。**
+
+> **项目状态：维护模式。** Awaitless 作为 OSS 与系统工程项目保留，核心范围已经冻结；
+> 未来改动必须有反复出现的真实用户需求。参见 [ROADMAP.md](ROADMAP.md)。
 
 命令只走一个执行入口：短任务 inline 返回，较长或 queued 的任务自动变成 Local、SSH
 和 Slurm 上的持久 Job。工作负载始终运行在你自己的基础设施上。
 
 > **Agents submit work. Awaitless owns execution.**
 
-Awaitless 位于 Coding Agent 与计算资源之间，对上提供一套自适应、稳定的 Job 契约，对下复用你
-已有的本地机器、SSH 主机与 Slurm 集群。
+Awaitless 位于 Coding Agent 与计算资源之间，对上提供一套稳定的 Job 契约，对下复用你已有的
+本地机器、SSH 主机与 Slurm 集群。
+
+项目同时记录这层抽象真正解决的可靠性问题，以及 `tmux`、`nohup`、`sbatch` 等已有工具已经
+覆盖的部分。[v0.8 证据套件](metric/README.md#v08-evidence-suite)（包括真实 SSH/CANN 验收）
+用于划定这个边界，而不是宣称一个通用平台护城河。
 
 [English](README.md) · [完整文档](docs/README.md) ·
 [Benchmark](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
@@ -264,6 +271,7 @@ Awaitless 没有 daemon、HTTP 服务或托管 sandbox。每次调用打开同�
 - [CLI、配置、SSH、Slurm、持久化、Artifact 与故障排查](docs/REFERENCE.md)
 - [MCP Tasks 协议与兼容性](docs/MCP_TASKS.md)
 - [Benchmark 定义、方法论与解释边界](metric/README.md)
+- [范围、维护策略与需求驱动路线图](ROADMAP.md)
 - [真实 MCP → Slurm 断线证据](docs/REFERENCE.md#real-mcp--slurm-disconnect-evidence)
 - [架构与设计取舍](docs/REFERENCE.md#architecture-and-runtime-model)
 

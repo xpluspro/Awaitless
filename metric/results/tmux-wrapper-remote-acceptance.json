@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "acceptance": "expanded-tmux-wrapper-ssh-cann",
+  "status": "passed",
+  "started_at": "2026-08-19T23:26:44.598368Z",
+  "finished_at": "2026-08-19T23:26:51.286482Z",
+  "target": {
+    "host": "zhiyuan",
+    "project": "/home/xflops/jhxu/ragged_softmax_moments",
+    "device": "0"
+  },
+  "checks": {
+    "atomic_remote_install": true,
+    "idempotent_replay": true,
+    "idempotent_conflict_rejected": true,
+    "both_jobs_succeeded": true,
+    "cann_smoke": true,
+    "disconnect_recovery": true,
+    "queue_serialized": true,
+    "completion_replay": true,
+    "completion_cursor": true
+  },
+  "jobs": [
+    "tmj_b746e81cd3574f28",
+    "tmj_823dd15917e844a2",
+    "tmj_658a6475f0384183"
+  ]
+}

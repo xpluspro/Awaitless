@@ -9,6 +9,7 @@ blocking client call, and validates the process group before cancellation.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,6 +43,66 @@ def atomic_json(path: Path, value: object) -> None:
 
 def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+@contextmanager
+def exclusive_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+def request_path(root: Path, request_id: str) -> Path:
+    digest = hashlib.sha256(request_id.encode()).hexdigest()
+    return root / "requests" / f"{digest}.json"
+
+
+def submission_fingerprint(
+    command: list[str], cwd: str, artifacts: list[str], queue: str | None
+) -> str:
+    value = {"command": command, "cwd": cwd, "artifacts": artifacts, "queue": queue}
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def queue_config(root: Path, name: str) -> dict[str, Any]:
+    if not SAFE_ID.fullmatch(name):
+        raise ValueError(f"unsafe queue name: {name!r}")
+    path = root / "queues" / name / "config.json"
+    if not path.is_file():
+        raise ValueError(f"queue does not exist: {name}")
+    return read_json(path)
+
+
+@contextmanager
+def queue_slot(root: Path, name: str | None):
+    if name is None:
+        yield None
+        return
+    concurrency = int(queue_config(root, name)["concurrency"])
+    handle = None
+    selected = None
+    try:
+        while selected is None:
+            for index in range(concurrency):
+                path = root / "queues" / name / f"slot-{index}.lock"
+                candidate = path.open("a+", encoding="utf-8")
+                try:
+                    fcntl.flock(candidate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    candidate.close()
+                    continue
+                handle = candidate
+                selected = index
+                break
+            if selected is None:
+                time.sleep(0.02)
+        yield selected
+    finally:
+        if handle is not None:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            handle.close()
 
 
 def process_start_ticks(pid: int | None) -> int | None:
@@ -153,56 +215,73 @@ def _summary(root: Path, job_id: str, lines: int, max_bytes: int) -> dict[str, A
     return result
 
 
+def ensure_worker_started(root: Path, socket: str, metadata: dict[str, Any]) -> None:
+    session = str(metadata["session"])
+    if tmux(socket, "has-session", "-t", session, check=False).returncode == 0:
+        return
+    keeper = f"keeper_{uuid.uuid4().hex[:8]}"
+    tmux(socket, "-f", "/dev/null", "new-session", "-d", "-s", keeper, "sleep 86400")
+    try:
+        tmux(socket, "set-option", "-g", "remain-on-exit", "on")
+        worker = [
+            sys.executable, str(Path(__file__).resolve()),
+            "--root", str(root), "--socket", socket, "_worker", metadata["job_id"],
+        ]
+        result = tmux(
+            socket, "new-session", "-d", "-s", session,
+            "-c", metadata["cwd"], shlex.join(worker), check=False,
+        )
+        if result.returncode and tmux(
+            socket, "has-session", "-t", session, check=False
+        ).returncode:
+            raise RuntimeError(f"cannot launch tmux worker: {result.stderr.strip()}")
+    finally:
+        tmux(socket, "kill-session", "-t", keeper, check=False)
+
+
 def submit(args: argparse.Namespace) -> int:
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         raise ValueError("submit requires a command after --")
     root = args.root.resolve()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    job_id = args.job_id or f"tmj_{uuid.uuid4().hex[:16]}"
-    directory = job_dir(root, job_id)
-    directory.mkdir(mode=0o700)
-    session = f"job_{hashlib.sha256(job_id.encode()).hexdigest()[:16]}"
-    channel = f"done_{hashlib.sha256(job_id.encode()).hexdigest()[:20]}"
     cwd = str(Path(args.cwd or os.getcwd()).resolve())
-    metadata = {
-        "job_id": job_id,
-        "session": session,
-        "channel": channel,
-        "socket": args.socket,
-        "cwd": cwd,
-        "command": command,
-        "artifacts": args.artifact,
-        "created_at": utc_now(),
-    }
-    atomic_json(directory / "metadata.json", metadata)
-
-    keeper = f"keeper_{uuid.uuid4().hex[:8]}"
-    tmux(args.socket, "-f", "/dev/null", "new-session", "-d", "-s", keeper, "sleep 86400")
-    try:
-        tmux(args.socket, "set-option", "-g", "remain-on-exit", "on")
-        worker = [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "--root",
-            str(root),
-            "--socket",
-            args.socket,
-            "_worker",
-            job_id,
-        ]
-        tmux(
-            args.socket,
-            "new-session",
-            "-d",
-            "-s",
-            session,
-            "-c",
-            cwd,
-            shlex.join(worker),
-        )
-    finally:
-        tmux(args.socket, "kill-session", "-t", keeper, check=False)
+    if args.queue:
+        queue_config(root, args.queue)
+    fingerprint = submission_fingerprint(command, cwd, args.artifact, args.queue)
+    with exclusive_lock(root / ".submission.lock"):
+        if args.client_request_id:
+            index = request_path(root, args.client_request_id)
+            if index.exists():
+                existing = read_json(index)
+                if existing["fingerprint"] != fingerprint:
+                    raise ValueError("client request ID was reused with different arguments")
+                metadata = read_json(job_dir(root, existing["job_id"]) / "metadata.json")
+                ensure_worker_started(root, args.socket, metadata)
+                print(json.dumps({
+                    "job_id": existing["job_id"], "state": "running",
+                    "backend": "tmux_wrapped", "idempotent_replay": True,
+                }, separators=(",", ":")))
+                return 0
+        job_id = args.job_id or f"tmj_{uuid.uuid4().hex[:16]}"
+        directory = job_dir(root, job_id)
+        directory.mkdir(mode=0o700)
+        session = f"job_{hashlib.sha256(job_id.encode()).hexdigest()[:16]}"
+        channel = f"done_{hashlib.sha256(job_id.encode()).hexdigest()[:20]}"
+        metadata = {
+            "job_id": job_id, "session": session, "channel": channel,
+            "socket": args.socket, "cwd": cwd, "command": command,
+            "artifacts": args.artifact, "client_request_id": args.client_request_id,
+            "queue": args.queue, "created_at": utc_now(),
+        }
+        atomic_json(directory / "metadata.json", metadata)
+        if args.client_request_id:
+            atomic_json(
+                request_path(root, args.client_request_id),
+                {"client_request_id": args.client_request_id, "job_id": job_id,
+                 "fingerprint": fingerprint},
+            )
+        ensure_worker_started(root, args.socket, metadata)
     print(json.dumps({"job_id": job_id, "state": "running", "backend": "tmux_wrapped"}, separators=(",", ":")))
     return 0
 
@@ -212,21 +291,29 @@ def worker(args: argparse.Namespace) -> int:
     metadata = read_json(directory / "metadata.json")
     started = time.monotonic()
     try:
-        with (directory / "stdout.log").open("ab", buffering=0) as stdout, (directory / "stderr.log").open("ab", buffering=0) as stderr:
-            process = subprocess.Popen(
-                metadata["command"],
-                cwd=metadata["cwd"],
-                stdin=subprocess.DEVNULL,
-                stdout=stdout,
-                stderr=stderr,
-                start_new_session=True,
-                close_fds=True,
-            )
-            atomic_json(
-                directory / "process.json",
-                {"pid": process.pid, "start_ticks": process_start_ticks(process.pid)},
-            )
-            exit_code = process.wait()
+        (directory / "queue_state").write_text("queued\n", encoding="utf-8")
+        with queue_slot(args.root.resolve(), metadata.get("queue")) as slot:
+            (directory / "queue_state").write_text("running\n", encoding="utf-8")
+            if slot is not None:
+                (directory / "queue_slot").write_text(str(slot), encoding="utf-8")
+            cancelled = (directory / "cancelled").exists()
+            exit_code = 0
+            if not cancelled:
+                with (directory / "stdout.log").open("ab", buffering=0) as stdout, (directory / "stderr.log").open("ab", buffering=0) as stderr:
+                    process = subprocess.Popen(
+                        metadata["command"],
+                        cwd=metadata["cwd"],
+                        stdin=subprocess.DEVNULL,
+                        stdout=stdout,
+                        stderr=stderr,
+                        start_new_session=True,
+                        close_fds=True,
+                    )
+                    atomic_json(
+                        directory / "process.json",
+                        {"pid": process.pid, "start_ticks": process_start_ticks(process.pid)},
+                    )
+                    exit_code = process.wait()
         cancelled = (directory / "cancelled").exists()
         atomic_json(
             directory / "result.json",
@@ -317,6 +404,79 @@ def status(args: argparse.Namespace) -> int:
     return 0
 
 
+def create_queue(args: argparse.Namespace) -> int:
+    if not SAFE_ID.fullmatch(args.name):
+        raise ValueError(f"unsafe queue name: {args.name!r}")
+    if args.concurrency <= 0:
+        raise ValueError("queue concurrency must be positive")
+    root = args.root.resolve()
+    path = root / "queues" / args.name / "config.json"
+    with exclusive_lock(root / ".queue.lock"):
+        if path.exists():
+            existing = read_json(path)
+            if existing["concurrency"] != args.concurrency:
+                raise ValueError("queue already exists with different concurrency")
+            created = False
+        else:
+            atomic_json(path, {"name": args.name, "concurrency": args.concurrency})
+            created = True
+    print(json.dumps({"name": args.name, "concurrency": args.concurrency, "created": created}))
+    return 0
+
+
+def register_completion_events(root: Path) -> None:
+    event_root = root / "completion-events"
+    with exclusive_lock(root / ".completion.lock"):
+        registered = {
+            str(value["job_id"])
+            for path in event_root.glob("cmp_*.json")
+            for value in [read_json(path)]
+        }
+        counter_path = event_root / "counter"
+        counter = int(counter_path.read_text(encoding="utf-8")) if counter_path.exists() else 0
+        for result_path in sorted(root.glob("tmj_*/result.json")):
+            job_id = result_path.parent.name
+            if job_id in registered:
+                continue
+            counter += 1
+            completion_id = f"cmp_{counter:020d}"
+            result = read_json(result_path)
+            atomic_json(event_root / f"{completion_id}.json", {
+                "completion_id": completion_id, "job_id": job_id,
+                "state": result.get("state"),
+                "finished_at": result.get("finished_at"),
+            })
+        counter_path.parent.mkdir(parents=True, exist_ok=True)
+        counter_path.write_text(str(counter), encoding="utf-8")
+
+
+def completion_rows(root: Path) -> list[dict[str, Any]]:
+    register_completion_events(root)
+    rows = []
+    for path in sorted((root / "completion-events").glob("cmp_*.json")):
+        event = read_json(path)
+        event["result"] = _summary(root, str(event["job_id"]), 50, 65536)
+        rows.append(event)
+    return rows
+
+
+def completions(args: argparse.Namespace) -> int:
+    rows = completion_rows(args.root.resolve())
+    start = 0
+    if args.after:
+        matches = [index for index, row in enumerate(rows) if row["completion_id"] == args.after]
+        if not matches:
+            raise ValueError("unknown completion cursor")
+        start = matches[0] + 1
+    page = rows[start:start + args.limit]
+    next_cursor = page[-1]["completion_id"] if page else args.after
+    print(json.dumps({
+        "completions": page, "next_cursor": next_cursor,
+        "has_more": start + len(page) < len(rows),
+    }, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--root", required=True, type=Path)
@@ -327,6 +487,8 @@ def parser() -> argparse.ArgumentParser:
     submit_parser.add_argument("--job-id")
     submit_parser.add_argument("--cwd")
     submit_parser.add_argument("--artifact", action="append", default=[])
+    submit_parser.add_argument("--client-request-id")
+    submit_parser.add_argument("--queue")
     submit_parser.add_argument("command", nargs=argparse.REMAINDER)
 
     wait_parser = commands.add_parser("wait")
@@ -342,6 +504,14 @@ def parser() -> argparse.ArgumentParser:
     status_parser = commands.add_parser("status")
     status_parser.add_argument("job_id")
     status_parser.add_argument("--max-bytes", type=int, default=65536)
+
+    queue_parser = commands.add_parser("queue-create")
+    queue_parser.add_argument("name")
+    queue_parser.add_argument("--concurrency", required=True, type=int)
+
+    completions_parser = commands.add_parser("completions")
+    completions_parser.add_argument("--after")
+    completions_parser.add_argument("--limit", type=int, default=50)
 
     worker_parser = commands.add_parser("_worker")
     worker_parser.add_argument("job_id")
@@ -359,6 +529,10 @@ def main(argv: list[str] | None = None) -> int:
             return cancel(args)
         if args.action == "status":
             return status(args)
+        if args.action == "queue-create":
+            return create_queue(args)
+        if args.action == "completions":
+            return completions(args)
         if args.action == "_worker":
             return worker(args)
         return 2

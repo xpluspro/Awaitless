@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Freeze the product scope in maintenance mode and document the project as a
+  lightweight durable remote-job execution layer for coding agents, rather than
+  an actively expanding hosted or platform product.
+- Add the substitution-cost audit for the expanded tmux wrapper: it covers 10/11
+  audited capabilities on Local and SSH with 517 lines of consumer glue, while
+  Awaitless covers 11/11 across Local, SSH, and Slurm with 4,732 implementation
+  lines. The audit is explicitly a maintenance-surface comparison, not a quality
+  score.
+- Record the real `zhiyuan` SSH/CANN acceptance artifact. Atomic installation,
+  idempotent replay/conflict handling, recovery, queue serialization, completion
+  replay/cursors, and both jobs succeeding all passed; Slurm was not available on
+  that host, so this is not a Slurm acceptance claim.
+- Preserve the v0.8 Luna and historical fault-matrix results as evidence with
+  their limitations. The release gate remains false; no new product expansion is
+  implied by the engineering validation.
+
 ## 0.8.0 — 2026-08-19
 
 - Define the v0.8 Agent Job Protocol in `JOB_PROTOCOL.md`, including normative

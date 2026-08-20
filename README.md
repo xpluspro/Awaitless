@@ -6,7 +6,11 @@
 [![PyPI](https://img.shields.io/pypi/v/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/awaitless-runner.svg)](https://pypi.org/project/awaitless-runner/)
 
-**Adaptive durable execution for coding agents.**
+**Lightweight durable remote-job execution for coding agents, with Local / SSH / Slurm support.**
+
+> **Project status: maintenance mode.** Awaitless is preserved as an OSS and systems
+> engineering project. The core scope is frozen; future changes require repeated,
+> concrete user demand. See [ROADMAP.md](ROADMAP.md).
 
 Run commands through one execution layer. Quick work returns inline; longer or
 queued work becomes durable across local, SSH, and Slurm. Your workload stays
@@ -14,9 +18,15 @@ on infrastructure you already own.
 
 > **Agents submit work. Awaitless owns execution.**
 
-Awaitless is the adaptive durable execution layer between coding agents and the
-compute they use. It gives agents one stable job contract while reusing your local
-machine, SSH hosts, and Slurm clusters underneath.
+Awaitless is a small, self-hosted execution layer between coding agents and the
+compute they use. It gives agents one stable job contract while reusing local
+machines, SSH hosts, and Slurm clusters underneath.
+
+The project deliberately documents both what the abstraction makes reliable and
+where existing tools such as `tmux`, `nohup`, and `sbatch` already cover the need.
+The [v0.8 evidence suite](metric/README.md#v08-evidence-suite), including a real
+SSH/CANN acceptance run, is the basis for that boundary rather than a claim of a
+general-purpose platform moat.
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) ·
 [Benchmarks](metric/README.md) · [PyPI](https://pypi.org/project/awaitless-runner/)
@@ -275,6 +285,7 @@ tails enter the agent context.
 - [CLI, configuration, SSH, Slurm, persistence, Artifacts, and troubleshooting](docs/REFERENCE.md)
 - [MCP Tasks protocol and compatibility](docs/MCP_TASKS.md)
 - [Benchmark definitions, methodology, and interpretation](metric/README.md)
+- [Scope, maintenance policy, and demand-driven roadmap](ROADMAP.md)
 - [Real MCP → Slurm disconnect evidence](docs/REFERENCE.md#real-mcp--slurm-disconnect-evidence)
 - [Architecture and design rationale](docs/REFERENCE.md#architecture-and-runtime-model)
 

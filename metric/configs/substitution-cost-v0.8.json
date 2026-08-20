@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "name": "Awaitless v0.8 substitution-cost audit",
+  "capabilities": [
+    "stable_job_id",
+    "idempotent_submission",
+    "durable_recovery",
+    "bounded_logs",
+    "artifact_manifest",
+    "process_tree_cancel",
+    "named_concurrency_queue",
+    "ssh_backend",
+    "slurm_backend",
+    "completion_cursor",
+    "disconnect_recovery"
+  ],
+  "limitations": [
+    "The checked-in tmux wrapper is an expanded Local/SSH reference implementation, not the best possible future wrapper.",
+    "The SSH/CANN acceptance is real; Slurm remains unsupported because the authorized target has no Slurm commands.",
+    "The named queue enforces a concurrency limit but does not implement or claim strict FIFO admission.",
+    "The SSH transport opens one SSH connection per control operation and has no connection multiplexing layer.",
+    "Historical v0.8 Agent and fault-matrix results used the original 319-SLOC wrapper; the expanded wrapper has current unit, local smoke, and real SSH/CANN acceptance evidence but no fresh 20-trial formal matrix.",
+    "SLOC depends on language and formatting and must not be interpreted as a quality score.",
+    "Static evidence linkage complements, but does not replace, the runtime fault matrix and remote acceptance."
+  ],
+  "arms": {
+    "tmux_wrapped": {
+      "ownership": "consumer",
+      "implementation_files": [
+        "metric/baselines/tmux_job.py",
+        "metric/baselines/tmux_job_ssh.py"
+      ],
+      "backend_specific_files": [
+        "metric/baselines/tmux_job.py",
+        "metric/baselines/tmux_job_ssh.py"
+      ],
+      "test_files": [
+        "tests/test_metric.py",
+        "scripts/acceptance_tmux_wrapper_remote.py",
+        "metric/results/tmux-wrapper-remote-acceptance.json"
+      ],
+      "supported_backends": ["local", "ssh"],
+      "runtime_dependencies": ["python", "tmux", "openssh for ssh backend"],
+      "capabilities": {
+        "stable_job_id": {"supported": true, "implementation_patterns": ["job_id = args\\.job_id or", "metadata\\.json"], "test_patterns": ["test_wrapped_tmux_recovers"]},
+        "idempotent_submission": {"supported": true, "implementation_patterns": ["client_request_id", "submission_fingerprint", "idempotent_replay"], "test_patterns": ["test_wrapped_tmux_idempotency_queue_and_completion_cursor"]},
+        "durable_recovery": {"supported": true, "implementation_patterns": ["def wait_for_job", "result\\.json"], "test_patterns": ["test_wrapped_tmux_recovers"]},
+        "bounded_logs": {"supported": true, "implementation_patterns": ["def _tail", "max_bytes"], "test_patterns": ["test_wrapped_tmux_bounds_logs"]},
+        "artifact_manifest": {"supported": true, "implementation_patterns": ["def _artifacts", "parsed_results"], "test_patterns": ["test_wrapped_tmux_bounds_logs_and_parses_artifact"]},
+        "process_tree_cancel": {"supported": true, "implementation_patterns": ["def cancel", "killpg"], "test_patterns": ["test_published_wrapper_cancel_matrix_has_twenty_clean_trials"]},
+        "named_concurrency_queue": {"supported": true, "implementation_patterns": ["def create_queue", "def queue_slot", "concurrency"], "test_patterns": ["test_wrapped_tmux_idempotency_queue_and_completion_cursor"]},
+        "ssh_backend": {"supported": true, "implementation_patterns": ["Thin SSH transport", "BatchMode=yes", "def install"], "test_patterns": ["test_tmux_ssh_transport_quotes_remote_arguments", "expanded-tmux-wrapper-ssh-cann"]},
+        "slurm_backend": {"supported": false},
+        "completion_cursor": {"supported": true, "implementation_patterns": ["def completions", "completion_id", "next_cursor"], "test_patterns": ["test_wrapped_tmux_idempotency_queue_and_completion_cursor"]},
+        "disconnect_recovery": {"supported": true, "implementation_patterns": ["wait-for", "def wait_for_job"], "test_patterns": ["test_wrapped_tmux_recovers", "\"disconnect_recovery\": true"]}
+      }
+    },
+    "awaitless": {
+      "ownership": "product",
+      "implementation_files": [
+        "src/awaitless/cli.py", "src/awaitless/config.py", "src/awaitless/db.py",
+        "src/awaitless/mcp_server.py", "src/awaitless/mcp_tasks.py",
+        "src/awaitless/runner.py", "src/awaitless/service.py", "src/awaitless/util.py",
+        "src/awaitless/backends/local.py", "src/awaitless/backends/ssh.py",
+        "src/awaitless/backends/slurm.py"
+      ],
+      "backend_specific_files": [
+        "src/awaitless/backends/local.py", "src/awaitless/backends/ssh.py",
+        "src/awaitless/backends/slurm.py"
+      ],
+      "test_files": [
+        "tests/test_cli.py", "tests/test_db.py", "tests/test_mcp.py",
+        "tests/test_slurm.py", "tests/test_ssh.py", "tests/test_util.py"
+      ],
+      "supported_backends": ["local", "ssh", "slurm"],
+      "runtime_dependencies": ["python", "bash", "openssh for remote backends", "slurm client for slurm backend"],
+      "capabilities": {
+        "stable_job_id": {"supported": true, "implementation_patterns": ["job_id", "submit"], "test_patterns": ["test_adaptive_run_detaches"]},
+        "idempotent_submission": {"supported": true, "implementation_patterns": ["client_request_id", "submission_fingerprint"], "test_patterns": ["idempotent|duplicate_start"]},
+        "durable_recovery": {"supported": true, "implementation_patterns": ["def wait", "recover"], "test_patterns": ["recovers|recovery"]},
+        "bounded_logs": {"supported": true, "implementation_patterns": ["max_return_bytes", "log_tail_lines"], "test_patterns": ["bounded|truncat|large_log"]},
+        "artifact_manifest": {"supported": true, "implementation_patterns": ["artifacts", "sha256"], "test_patterns": ["artifact"]},
+        "process_tree_cancel": {"supported": true, "implementation_patterns": ["def cancel", "killpg"], "test_patterns": ["cancel"]},
+        "named_concurrency_queue": {"supported": true, "implementation_patterns": ["create_queue", "concurrency"], "test_patterns": ["queue.*concurrency|concurrency.*queue"]},
+        "ssh_backend": {"supported": true, "implementation_patterns": ["class SSHBackend", "ssh_target_and_options"], "test_patterns": ["ssh"]},
+        "slurm_backend": {"supported": true, "implementation_patterns": ["class SlurmBackend", "sbatch"], "test_patterns": ["slurm|scheduler"]},
+        "completion_cursor": {"supported": true, "implementation_patterns": ["completion_cursor", "wait_for_completions"], "test_patterns": ["completion.*cursor|cursor.*completion"]},
+        "disconnect_recovery": {"supported": true, "implementation_patterns": ["backend_connected", "wait_state"], "test_patterns": ["disconnect|new_client"]}
+      }
+    }
+  }
+}

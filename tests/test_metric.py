@@ -6,10 +6,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from awaitless import __version__
+from metric.baselines import tmux_job, tmux_job_ssh
 from metric import (
     analyze,
     analyze_long_running,
@@ -18,11 +21,39 @@ from metric import (
     run_local,
     run_long_running,
     run_spectrum,
+    run_substitution_cost,
     run_tool_selection,
 )
+from scripts import acceptance_tmux_wrapper_remote
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class SubstitutionCostMetricTest(unittest.TestCase):
+    def test_checked_in_capability_claims_have_code_and_test_evidence(self) -> None:
+        config = json.loads(
+            (ROOT / "metric" / "configs" / "substitution-cost-v0.8.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        result = run_substitution_cost.audit(config)
+        self.assertEqual(result["arms"]["tmux_wrapped"]["supported_capabilities"], 10)
+        self.assertEqual(result["arms"]["awaitless"]["supported_capabilities"], 11)
+        self.assertEqual(result["comparison"]["additional_backends"], ["slurm"])
+        self.assertGreater(result["arms"]["tmux_wrapped"]["consumer_glue_sloc"], 0)
+        self.assertEqual(result["arms"]["awaitless"]["consumer_glue_sloc"], 0)
+        self.assertGreater(result["arms"]["awaitless"]["product_implementation_sloc"], 0)
+
+    def test_supported_claim_cannot_omit_evidence(self) -> None:
+        config = json.loads(
+            (ROOT / "metric" / "configs" / "substitution-cost-v0.8.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        del config["arms"]["tmux_wrapped"]["capabilities"]["stable_job_id"]["test_patterns"]
+        with self.assertRaisesRegex(ValueError, "lacks test evidence"):
+            run_substitution_cost.validate_config(config)
 
 
 def metric_config(*, arm: str, scenario: str) -> dict[str, object]:
@@ -228,6 +259,186 @@ class MetricWorkloadTest(unittest.TestCase):
             self.assertTrue(record["observed"]["recovery_injected"])
             self.assertTrue(record["metrics"]["recovery_success"])
             self.assertEqual(record["metrics"]["agent_tool_calls"], 3)
+
+    def test_wrapped_tmux_bounds_logs_and_parses_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "stdout.log"
+            log.write_text("one\ntwo\nthree\n", encoding="utf-8")
+            tail, truncated = tmux_job._tail(log, lines=2, max_bytes=1024)
+            self.assertEqual(tail, "two\nthree\n")
+            self.assertTrue(truncated)
+
+            artifact = root / "result.json"
+            artifact.write_text('{"score": 9.5}\n', encoding="utf-8")
+            items = tmux_job._artifacts(
+                {"cwd": str(root), "artifacts": ["result.json"]}, max_bytes=1024
+            )
+            self.assertEqual(items[0]["content"], {"score": 9.5})
+
+    def test_published_wrapper_cancel_matrix_has_twenty_clean_trials(self) -> None:
+        summary = json.loads(
+            (ROOT / "metric" / "results" / "fault-matrix-v0.8-final-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        cancellation = summary["by_scenario"]["cancel_tree"]["tmux_wrapped"]
+        self.assertEqual(cancellation["n_records"], 20)
+        self.assertEqual(cancellation["n_errors"], 0)
+        self.assertEqual(
+            cancellation["rates"]["cancel_cleanup_success"]["successes"], 20
+        )
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_wrapped_tmux_idempotency_queue_and_completion_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            socket = f"metric-full-{time.time_ns()}"
+            base = [
+                sys.executable, str(ROOT / "metric" / "baselines" / "tmux_job.py"),
+                "--root", str(root), "--socket", socket,
+            ]
+
+            def invoke(*arguments: str, expected: int = 0) -> dict[str, object]:
+                result = subprocess.run(
+                    [*base, *arguments], text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, check=False, timeout=10,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                return json.loads(result.stdout or result.stderr)
+
+            try:
+                invoke("queue-create", "scarce", "--concurrency", "1")
+                event_file = root / "events.txt"
+
+                def submit(label: str, request_id: str) -> dict[str, object]:
+                    code = (
+                        "from pathlib import Path; import time; "
+                        f"p=Path({str(event_file)!r}); "
+                        f"p.open('a').write('{label}-start\\n'); time.sleep(0.15); "
+                        f"p.open('a').write('{label}-end\\n')"
+                    )
+                    return invoke(
+                        "submit", "--queue", "scarce", "--client-request-id", request_id,
+                        "--", sys.executable, "-c", code,
+                    )
+
+                first = submit("a", "request-a")
+                replay = submit("a", "request-a")
+                self.assertEqual(replay["job_id"], first["job_id"])
+                self.assertTrue(replay["idempotent_replay"])
+                conflict = invoke(
+                    "submit", "--queue", "scarce", "--client-request-id", "request-a",
+                    "--", sys.executable, "-c", "print('different')", expected=2,
+                )
+                self.assertIn("different arguments", str(conflict["error"]))
+                second = submit("b", "request-b")
+                invoke("wait", str(first["job_id"]))
+                invoke("wait", str(second["job_id"]))
+                self.assertEqual(
+                    event_file.read_text(encoding="utf-8").splitlines(),
+                    ["a-start", "a-end", "b-start", "b-end"],
+                )
+
+                page = invoke("completions", "--limit", "1")
+                self.assertEqual(len(page["completions"]), 1)
+                replay_page = invoke("completions", "--limit", "1")
+                self.assertEqual(replay_page["completions"], page["completions"])
+                next_page = invoke(
+                    "completions", "--after", str(page["next_cursor"]), "--limit", "1"
+                )
+                self.assertEqual(len(next_page["completions"]), 1)
+                self.assertNotEqual(next_page["next_cursor"], page["next_cursor"])
+            finally:
+                subprocess.run(
+                    ["tmux", "-L", socket, "kill-server"], stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, check=False,
+                )
+
+    def test_tmux_ssh_transport_quotes_remote_arguments(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b'{"ok":true}\n', stderr=b""
+        )
+        with patch("metric.baselines.tmux_job_ssh.subprocess.run", return_value=completed) as run:
+            self.assertEqual(
+                tmux_job_ssh.ssh("cluster", ["python3", "wrapper.py", "wait", "job 1"]),
+                0,
+            )
+        command = run.call_args.args[0]
+        self.assertEqual(command[:4], ["ssh", "-o", "BatchMode=yes", "cluster"])
+        self.assertEqual(command[-1], "python3 wrapper.py wait 'job 1'")
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_wrapped_tmux_recovers_reserved_request_after_launch_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            socket = f"metric-replay-{time.time_ns()}"
+            arguments = [
+                "--root", str(root), "--socket", socket, "submit",
+                "--client-request-id", "recover-launch", "--",
+                sys.executable, "-c", "print('once')",
+            ]
+            original = tmux_job.ensure_worker_started
+            try:
+                with patch.object(
+                    tmux_job, "ensure_worker_started", side_effect=RuntimeError("injected")
+                ):
+                    self.assertEqual(tmux_job.main(arguments), 2)
+                with patch.object(tmux_job, "ensure_worker_started", wraps=original):
+                    self.assertEqual(tmux_job.main(arguments), 0)
+                request = next((root / "requests").glob("*.json"))
+                job_id = json.loads(request.read_text(encoding="utf-8"))["job_id"]
+                self.assertEqual(
+                    tmux_job.main([
+                        "--root", str(root), "--socket", socket, "wait", job_id
+                    ]),
+                    0,
+                )
+                self.assertEqual(
+                    (root / job_id / "stdout.log").read_text(encoding="utf-8"), "once\n"
+                )
+            finally:
+                subprocess.run(
+                    ["tmux", "-L", socket, "kill-server"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+                )
+
+    def test_completion_cursor_includes_late_discovered_older_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def terminal(job_id: str, finished_at: str) -> None:
+                directory = root / job_id
+                directory.mkdir()
+                (directory / "metadata.json").write_text(
+                    json.dumps({"cwd": str(root), "artifacts": []}), encoding="utf-8"
+                )
+                (directory / "result.json").write_text(
+                    json.dumps({
+                        "state": "succeeded", "exit_code": 0,
+                        "duration_seconds": 0, "finished_at": finished_at,
+                    }),
+                    encoding="utf-8",
+                )
+
+            terminal("tmj_first", "2026-08-20T01:00:00Z")
+            first = tmux_job.completion_rows(root)
+            self.assertEqual(len(first), 1)
+            terminal("tmj_late", "2026-08-19T01:00:00Z")
+            rows = tmux_job.completion_rows(root)
+            after = [row for row in rows if row["completion_id"] > first[0]["completion_id"]]
+            self.assertEqual([row["job_id"] for row in after], ["tmj_late"])
+
+    def test_remote_wrapper_acceptance_parses_json_after_diagnostics(self) -> None:
+        base = ["unused"]
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=2, stdout="", stderr="warning\n{\"error\":\"conflict\"}\n"
+        )
+        with patch("scripts.acceptance_tmux_wrapper_remote.subprocess.run", return_value=completed):
+            self.assertEqual(
+                acceptance_tmux_wrapper_remote.invoke(base, "submit", expected={2}),
+                {"error": "conflict"},
+            )
 
     def test_trial_schema_is_valid_json(self) -> None:
         schema = json.loads(

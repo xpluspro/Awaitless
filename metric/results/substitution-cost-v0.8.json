@@ -1,0 +1,349 @@
+{
+  "schema_version": 1,
+  "name": "Awaitless v0.8 substitution-cost audit",
+  "generated_at": "2026-08-19T23:30:06.994513Z",
+  "method": {
+    "supported_requires_implementation_and_test_evidence": true,
+    "sloc": "non-empty, non-comment physical lines",
+    "consumer_glue_and_product_implementation_reported_separately": true,
+    "limitations": [
+      "The checked-in tmux wrapper is an expanded Local/SSH reference implementation, not the best possible future wrapper.",
+      "The SSH/CANN acceptance is real; Slurm remains unsupported because the authorized target has no Slurm commands.",
+      "The named queue enforces a concurrency limit but does not implement or claim strict FIFO admission.",
+      "The SSH transport opens one SSH connection per control operation and has no connection multiplexing layer.",
+      "Historical v0.8 Agent and fault-matrix results used the original 319-SLOC wrapper; the expanded wrapper has current unit, local smoke, and real SSH/CANN acceptance evidence but no fresh 20-trial formal matrix.",
+      "SLOC depends on language and formatting and must not be interpreted as a quality score.",
+      "Static evidence linkage complements, but does not replace, the runtime fault matrix and remote acceptance."
+    ]
+  },
+  "capabilities": [
+    "stable_job_id",
+    "idempotent_submission",
+    "durable_recovery",
+    "bounded_logs",
+    "artifact_manifest",
+    "process_tree_cancel",
+    "named_concurrency_queue",
+    "ssh_backend",
+    "slurm_backend",
+    "completion_cursor",
+    "disconnect_recovery"
+  ],
+  "arms": {
+    "tmux_wrapped": {
+      "name": "tmux_wrapped",
+      "supported_capabilities": 10,
+      "total_capabilities": 11,
+      "capabilities": {
+        "stable_job_id": {
+          "supported": true,
+          "implementation_evidence": [
+            "job_id = args\\.job_id or",
+            "metadata\\.json"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "idempotent_submission": {
+          "supported": true,
+          "implementation_evidence": [
+            "client_request_id",
+            "submission_fingerprint",
+            "idempotent_replay"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "durable_recovery": {
+          "supported": true,
+          "implementation_evidence": [
+            "def wait_for_job",
+            "result\\.json"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "bounded_logs": {
+          "supported": true,
+          "implementation_evidence": [
+            "def _tail",
+            "max_bytes"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "artifact_manifest": {
+          "supported": true,
+          "implementation_evidence": [
+            "def _artifacts",
+            "parsed_results"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "process_tree_cancel": {
+          "supported": true,
+          "implementation_evidence": [
+            "def cancel",
+            "killpg"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "named_concurrency_queue": {
+          "supported": true,
+          "implementation_evidence": [
+            "def create_queue",
+            "def queue_slot",
+            "concurrency"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "ssh_backend": {
+          "supported": true,
+          "implementation_evidence": [
+            "Thin SSH transport",
+            "BatchMode=yes",
+            "def install"
+          ],
+          "test_evidence": [
+            "metric/results/tmux-wrapper-remote-acceptance.json",
+            "scripts/acceptance_tmux_wrapper_remote.py",
+            "tests/test_metric.py"
+          ]
+        },
+        "slurm_backend": {
+          "supported": false,
+          "implementation_evidence": [],
+          "test_evidence": []
+        },
+        "completion_cursor": {
+          "supported": true,
+          "implementation_evidence": [
+            "def completions",
+            "completion_id",
+            "next_cursor"
+          ],
+          "test_evidence": [
+            "tests/test_metric.py"
+          ]
+        },
+        "disconnect_recovery": {
+          "supported": true,
+          "implementation_evidence": [
+            "wait-for",
+            "def wait_for_job"
+          ],
+          "test_evidence": [
+            "metric/results/tmux-wrapper-remote-acceptance.json",
+            "tests/test_metric.py"
+          ]
+        }
+      },
+      "consumer_glue_sloc": 517,
+      "product_implementation_sloc": 517,
+      "implementation_files": 2,
+      "backend_specific_sloc": 517,
+      "backend_specific_files": [
+        "metric/baselines/tmux_job.py",
+        "metric/baselines/tmux_job_ssh.py"
+      ],
+      "test_files": 3,
+      "test_evidence_files": [
+        "metric/results/tmux-wrapper-remote-acceptance.json",
+        "scripts/acceptance_tmux_wrapper_remote.py",
+        "tests/test_metric.py"
+      ],
+      "supported_backends": [
+        "local",
+        "ssh"
+      ],
+      "runtime_dependencies": [
+        "python",
+        "tmux",
+        "openssh for ssh backend"
+      ],
+      "ownership": "consumer"
+    },
+    "awaitless": {
+      "name": "awaitless",
+      "supported_capabilities": 11,
+      "total_capabilities": 11,
+      "capabilities": {
+        "stable_job_id": {
+          "supported": true,
+          "implementation_evidence": [
+            "job_id",
+            "submit"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py"
+          ]
+        },
+        "idempotent_submission": {
+          "supported": true,
+          "implementation_evidence": [
+            "client_request_id",
+            "submission_fingerprint"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py"
+          ]
+        },
+        "durable_recovery": {
+          "supported": true,
+          "implementation_evidence": [
+            "def wait",
+            "recover"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_db.py",
+            "tests/test_slurm.py"
+          ]
+        },
+        "bounded_logs": {
+          "supported": true,
+          "implementation_evidence": [
+            "max_return_bytes",
+            "log_tail_lines"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_slurm.py",
+            "tests/test_util.py"
+          ]
+        },
+        "artifact_manifest": {
+          "supported": true,
+          "implementation_evidence": [
+            "artifacts",
+            "sha256"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_db.py",
+            "tests/test_mcp.py",
+            "tests/test_slurm.py",
+            "tests/test_ssh.py"
+          ]
+        },
+        "process_tree_cancel": {
+          "supported": true,
+          "implementation_evidence": [
+            "def cancel",
+            "killpg"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_db.py",
+            "tests/test_mcp.py",
+            "tests/test_slurm.py"
+          ]
+        },
+        "named_concurrency_queue": {
+          "supported": true,
+          "implementation_evidence": [
+            "create_queue",
+            "concurrency"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_mcp.py"
+          ]
+        },
+        "ssh_backend": {
+          "supported": true,
+          "implementation_evidence": [
+            "class SSHBackend",
+            "ssh_target_and_options"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_slurm.py",
+            "tests/test_ssh.py",
+            "tests/test_util.py"
+          ]
+        },
+        "slurm_backend": {
+          "supported": true,
+          "implementation_evidence": [
+            "class SlurmBackend",
+            "sbatch"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_slurm.py",
+            "tests/test_util.py"
+          ]
+        },
+        "completion_cursor": {
+          "supported": true,
+          "implementation_evidence": [
+            "completion_cursor",
+            "wait_for_completions"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py"
+          ]
+        },
+        "disconnect_recovery": {
+          "supported": true,
+          "implementation_evidence": [
+            "backend_connected",
+            "wait_state"
+          ],
+          "test_evidence": [
+            "tests/test_cli.py",
+            "tests/test_mcp.py"
+          ]
+        }
+      },
+      "consumer_glue_sloc": 0,
+      "product_implementation_sloc": 4732,
+      "implementation_files": 11,
+      "backend_specific_sloc": 1286,
+      "backend_specific_files": [
+        "src/awaitless/backends/local.py",
+        "src/awaitless/backends/ssh.py",
+        "src/awaitless/backends/slurm.py"
+      ],
+      "test_files": 6,
+      "test_evidence_files": [
+        "tests/test_cli.py",
+        "tests/test_db.py",
+        "tests/test_mcp.py",
+        "tests/test_slurm.py",
+        "tests/test_ssh.py",
+        "tests/test_util.py"
+      ],
+      "supported_backends": [
+        "local",
+        "ssh",
+        "slurm"
+      ],
+      "runtime_dependencies": [
+        "python",
+        "bash",
+        "openssh for remote backends",
+        "slurm client for slurm backend"
+      ],
+      "ownership": "product"
+    }
+  },
+  "comparison": {
+    "capability_gap": 1,
+    "consumer_glue_sloc_avoided": 517,
+    "additional_backends": [
+      "slurm"
+    ]
+  }
+}
